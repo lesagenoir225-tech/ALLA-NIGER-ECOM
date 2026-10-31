@@ -60,6 +60,30 @@ export async function isStaticHosting(): Promise<boolean> {
   return !(await hasNodeApi());
 }
 
+/**
+ * Extrait le message d'une réponse en erreur, quel que soit son format.
+ *
+ * Sur un hébergement statique, une route `/api/...` inconnue renvoie la page
+ * HTML du site : `res.json()` lèverait « Unexpected token '<' ».
+ */
+export async function readApiError(res: ApiResponse, fallback: string): Promise<string> {
+  try {
+    const text = await res.text();
+    if (!text) return fallback;
+    try {
+      const data = JSON.parse(text);
+      return data?.error || data?.message || fallback;
+    } catch {
+      if (/<!doctype|<html/i.test(text)) {
+        return `${fallback} Aucune réponse de la base de données : le site est servi en statique et la requête n’a pas atteint Supabase.`;
+      }
+      return fallback;
+    }
+  } catch {
+    return fallback;
+  }
+}
+
 function bearerToken(init?: RequestInit): string {
   const headers = init?.headers;
   if (!headers) return '';
@@ -153,6 +177,8 @@ function settingsToRow(s: any) {
     siteUrl: 'site_url',
     legalName: 'legal_name',
     legalInfo: 'legal_info',
+    nif: 'nif',
+    rccm: 'rccm',
     privacyText: 'privacy_text',
     heroTitle: 'hero_title',
     heroSubtitle: 'hero_subtitle',
@@ -184,6 +210,8 @@ function rowToSettings(r: any) {
     siteUrl: r.site_url ?? '',
     legalName: r.legal_name ?? '',
     legalInfo: r.legal_info ?? '',
+    nif: r.nif ?? '',
+    rccm: r.rccm ?? '',
     privacyText: r.privacy_text ?? '',
     heroTitle: r.hero_title ?? '',
     heroSubtitle: r.hero_subtitle ?? '',
@@ -454,6 +482,97 @@ export async function api(path: string, init?: RequestInit): Promise<ApiResponse
       const id = path.split('/').pop() as string;
       await callRpc('admin_delete_reference', { p_token: token, p_id: id });
       return ok({ success: true });
+    }
+
+    // --- Gestion de stock (fonctions PostgreSQL admin_stock_*) ---
+    if (path === '/api/admin/stock' && method === 'GET') {
+      const overview = await callRpc<any>('admin_stock_overview', { p_token: token });
+      const items = Array.isArray(overview?.items) ? overview.items : [];
+      return ok({
+        success: true,
+        items: items.map((i: any) => ({
+          productId: i.productId,
+          shop: i.shop,
+          name: i.name,
+          price: i.price === null || i.price === undefined ? null : Number(i.price),
+          costPrice: i.costPrice === null || i.costPrice === undefined ? null : Number(i.costPrice),
+          quantity: Number(i.quantity || 0),
+          alertThreshold: Number(i.alertThreshold ?? 3),
+          updatedAt: Number(i.updatedAt || 0),
+        })),
+        movements: Array.isArray(overview?.movements)
+          ? overview.movements.map((m: any) => ({
+              id: String(m.id),
+              productId: m.productId,
+              productName: m.productName,
+              shop: m.shop,
+              type: m.type,
+              quantity: Number(m.quantity || 0),
+              unitCost: m.unitCost === null || m.unitCost === undefined ? null : Number(m.unitCost),
+              reason: m.reason || '',
+              note: m.note || '',
+              receiptId: m.receiptId || undefined,
+              author: m.author || '',
+              createdAt: Number(m.createdAt || 0),
+            }))
+          : [],
+        totals: {
+          lines: Number(overview?.totals?.lines || 0),
+          quantity: Number(overview?.totals?.quantity || 0),
+          costValue: Number(overview?.totals?.costValue || 0),
+          saleValue: Number(overview?.totals?.saleValue || 0),
+          alertCount: Number(overview?.totals?.alertCount || 0),
+          outCount: Number(overview?.totals?.outCount || 0),
+        },
+      });
+    }
+
+    if (path === '/api/admin/stock/move' && method === 'POST') {
+      const result = await callRpc<any>('admin_stock_move', {
+        p_token: token,
+        p: {
+          productId: body.productId,
+          type: body.type,
+          quantity: Number(body.quantity || 0),
+          unitCost: body.unitCost ?? null,
+          costPrice: body.costPrice ?? null,
+          alertThreshold: body.alertThreshold ?? null,
+          reason: body.reason ?? '',
+          note: body.note ?? '',
+          author: body.author ?? '',
+        },
+      });
+      return ok({ success: true, ...result });
+    }
+
+    // --- Reçus (fonctions admin_*_receipt) ---
+    if (path === '/api/admin/receipts' && method === 'GET') {
+      const receipts = await callRpc<any[]>('admin_list_receipts', { p_token: token });
+      return ok({ success: true, receipts: receipts || [] });
+    }
+
+    if (path === '/api/admin/receipts' && method === 'POST') {
+      const receipt = await callRpc<any>('admin_save_receipt', {
+        p_token: token,
+        p: {
+          clientName: body.clientName ?? '',
+          clientPhone: body.clientPhone ?? '',
+          items: Array.isArray(body.items) ? body.items : [],
+          discount: Number(body.discount || 0),
+          paymentMethod: body.paymentMethod || 'espece',
+          amountPaid: Number(body.amountPaid || 0),
+          note: body.note ?? '',
+          affectStock: body.affectStock !== false,
+          author: body.author ?? '',
+        },
+      });
+      return ok({ success: true, receipt });
+    }
+
+    if (/^\/api\/admin\/receipts\/[^/]+\/void$/.test(path) && method === 'POST') {
+      const id = path.split('/')[4];
+      const receipt = await callRpc<any>('admin_void_receipt', { p_token: token, p_id: id });
+      return ok({ success: true, receipt });
     }
 
     // --- Téléversement : Supabase Storage via la fonction Edge « upload » ---

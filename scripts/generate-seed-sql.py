@@ -104,6 +104,8 @@ settings_rows = [
     ("site_url", st.get("siteUrl")),
     ("legal_name", st.get("legalName")),
     ("legal_info", st.get("legalInfo")),
+    ("nif", st.get("nif")),
+    ("rccm", st.get("rccm")),
     ("privacy_text", st.get("privacyText")),
     ("hero_title", st.get("heroTitle")),
     ("hero_subtitle", st.get("heroSubtitle")),

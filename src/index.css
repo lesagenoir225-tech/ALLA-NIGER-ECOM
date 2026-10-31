@@ -131,3 +131,44 @@ body {
 .no-scrollbar {
   scrollbar-width: none;
 }
+
+
+/* ---------------------------------------------------------------------------
+   Impression des reçus
+   Seul le bloc .receipt-print est imprimé ; le reste de l'administration
+   (navigation, boutons, fenêtres) est masqué.
+   --------------------------------------------------------------------------- */
+@media print {
+  @page {
+    size: A5 portrait;
+    margin: 8mm;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .receipt-print,
+  .receipt-print * {
+    visibility: visible !important;
+  }
+
+  .receipt-print {
+    position: absolute !important;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

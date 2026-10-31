@@ -13,7 +13,7 @@ Plateforme web e-commerce moderne, dynamique, responsive et rapide pour **ALFFA 
 - **Ordre d'affichage maîtrisé** : la position de chaque article est enregistrée en base (`products.display_order`, une liste par boutique) ; la flèche ↑ ↓ de l'administration est donc conservée après rechargement, y compris sur un hébergement statique.
 - **Prix en FCFA** : Affichage soigné en francs CFA (ex: `90 000 FCFA`) et mention explicite « *Prix à confirmer / Nous consulter* » pour les modèles sans prix arrêté.
 - **Commande WhatsApp pré-remplie** : Génère automatiquement un message personnalisé incluant le nom de la boutique, le modèle, la capacité/variante, le prix, la quantité demandée et le lien de la fiche. Contrôle du format international (ex. 227XXXXXXXX pour le Niger).
-- **Administration complète (7 sections)** :
+- **Administration complète (10 sections)** :
   1. *Tableau de bord* : Indicateurs clés (nombre de produits par boutique, en stock, prix à confirmer, sélections à la une) et checklist de complétion.
   2. *Produits Électronique* : Ajout, modification complète, suppression avec confirmation, masquage, réorganisation de l'ordre d'affichage.
   3. *Produits Textile* : Gestion complète des bazins et tissus.
@@ -21,8 +21,41 @@ Plateforme web e-commerce moderne, dynamique, responsive et rapide pour **ALFFA 
   5. *Marques textiles* : Gestion des marques (Drews, Gagny Lah, Getzner) et téléversement de logos.
   6. *Coordonnées & Paramètres* : Numéros WhatsApp, téléphone, email, adresse, horaires, liens sociaux, textes de présentation, mentions légales.
   7. *Images & Médias* : Téléversement et optimisation d'images jusqu'à 8 Mo.
+  8. *Expérience entrepreneuriale* : parcours, étapes, galerie et publication.
+  9. *Stock* : quantités par article, prix d'achat et de revente, valeur totale de la marchandise, alertes de réapprovisionnement et journal des mouvements (voir §5 bis).
+  10. *Reçus* : atelier d'encaissement produisant un reçu imprimable et partageable, signé et daté (voir §5 bis).
 - **Persistance réelle des données** : Base de données locale persistante (`data/database.json`) avec sauvegarde/restauration JSON et cache réactif côté client.
 - **SEO & Référencement** : Balises Open Graph, Twitter cards, balises canoniques, microdonnées Schema.org (`Product`, `Organization`), fichiers `sitemap.xml` et `robots.txt`.
+
+---
+
+## 1 bis. Stock et Reçus
+
+Deux modules pensés pour le quotidien de la boutique, disponibles en mode serveur **comme** sur l'hébergement statique LWS (fonctions PostgreSQL dédiées).
+
+### Stock
+
+- **Vue d'ensemble** : chaque article des deux univers apparaît avec sa quantité, son prix d'achat, son prix de vente et son seuil d'alerte.
+- **Quatre indicateurs** : nombre d'articles suivis, **valeur d'achat du stock** (ce que la marchandise a coûté), **valeur de revente** avec la marge potentielle en FCFA et en pourcentage, nombre d'articles à réapprovisionner ou en rupture.
+- **Mouvements** : entrée (livraison), sortie (casse, perte, usage interne), vente, retour, inventaire (quantité absolue) et ajustement. La quantité finale ne peut jamais devenir négative.
+- **Seuil d'alerte par article** : une ligne passe en « à réapprovisionner » dès que la quantité atteint le seuil.
+- **Journal** : les 60 derniers mouvements (article, type, quantité, motif, date) sont affichés ; les 2 000 derniers sont conservés.
+- **Export CSV** de l'inventaire pour impression ou tableur.
+- **Cohérence** : supprimer un produit du catalogue supprime aussi sa fiche de stock ; une vente enregistrée par un reçu décrémente automatiquement la quantité.
+
+### Reçus
+
+- **Atelier** : choix des articles dans le catalogue (quantité, prix unitaire modifiable, remise globale), mode de paiement (espèces, Orange Money, Moov Money, virement, chèque, à crédit), montant versé et note.
+- **Calculs côté serveur** : sous-total, remise, total, monnaie à rendre et statut (`payé`, `partiel`, `crédit`) sont recalculés côté serveur ; le navigateur ne fait qu'afficher.
+- **Numérotation continue** : `REC-ANNÉE-NNNN`, jamais réutilisée.
+- **Document imprimable** : logo, dénomination, slogan, adresse, téléphone, **NIF et RCCM** (renseignés dans *Coordonnées & Paramètres*), numéro, date **et heure** d'émission, détail des articles, total en chiffres **et en lettres**, montant versé, reste à payer, mention « Le Gérant » avec le cachet (`public/images/tampon.jpg`). L'impression est isolée par une feuille de style dédiée (`@media print`) : seule la feuille du reçu sort, en A5.
+- **Partage** : bouton *Partager* (partage natif du téléphone, repli WhatsApp avec le texte du reçu) et *Copier le texte* pour un envoi rapide au client.
+- **Immuabilité** : un reçu enregistré ne se modifie pas. Une erreur se corrige par **annulation** : le reçu reste consultable avec la mention « ANNULÉ », et la marchandise concernée est automatiquement remise en stock.
+
+### Où sont stockées ces données ?
+
+- **Mode serveur** : `data/stock.json` et `data/receipts.json` (hors dépôt, voir `.gitignore`), écriture atomique.
+- **Hébergement statique / Supabase** : tables `stock_items`, `stock_movements` et `receipts`, accessibles uniquement via les fonctions `admin_stock_overview`, `admin_stock_move`, `admin_list_receipts`, `admin_save_receipt` et `admin_void_receipt`, protégées par le jeton d'administration.
 
 ---
 
@@ -224,6 +257,11 @@ node scripts/.smoke-backend.mjs
 npx esbuild scripts/smoke-admin-save.tsx --bundle --platform=node --format=esm --target=node20 \
   --external:jsdom --outfile=scripts/.smoke-admin-save.mjs --define:import.meta.env='{"MODE":"test"}'
 node scripts/.smoke-admin-save.mjs
+
+# Stock et reçus : chargement, mouvements, document imprimable (jsdom)
+npx esbuild scripts/smoke-stock.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-stock.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-stock.mjs
 ```
 
 **Configuration de prévisualisation** : `vite.config.ts` autorise désormais les hôtes de prévisualisation (`server.allowedHosts: true`), sans impact sur le comportement local.

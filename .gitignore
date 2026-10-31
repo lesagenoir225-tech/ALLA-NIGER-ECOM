@@ -11,6 +11,11 @@ coverage/
 data/experience-references.json
 data/experience-references.json.tmp
 data/private-documents/
+# Stock et reçus : données d'exploitation, jamais versionnées
+data/stock.json
+data/stock.json.tmp
+data/receipts.json
+data/receipts.json.tmp
 public/images/uploads/
 package-lock.json
 scripts/.smoke*.mjs

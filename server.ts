@@ -17,6 +17,14 @@ import {
   remoteWritesEnabled,
   remoteReadsEnabled,
 } from './supabase/store';
+import {
+  applyMovement,
+  buildOverview,
+  createReceipt,
+  forgetProduct,
+  listReceipts,
+  voidReceipt,
+} from './server/stock';
 
 dotenv.config();
 
@@ -475,6 +483,8 @@ async function startServer() {
     if (shop === 'electronique' || shop === 'textile') {
       db.featured[shop] = db.featured[shop].filter((fId) => fId !== id);
     }
+    // Le produit disparaît du catalogue : sa ligne de stock aussi.
+    forgetProduct(id);
     await saveDatabase(db);
     res.json({ success: true, deletedId: id });
   });
@@ -504,6 +514,47 @@ async function startServer() {
     db.products = [...otherProducts, ...reordered];
     await saveDatabase(db);
     res.json({ success: true, products: db.products });
+  });
+
+  // 10 bis. GESTION DE STOCK
+  app.get('/api/admin/stock', verifyAdmin, async (_req: Request, res: Response) => {
+    const db = await loadDatabase();
+    res.json({ success: true, ...buildOverview(db.products) });
+  });
+
+  app.post('/api/admin/stock/move', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const db = await loadDatabase();
+      const result = applyMovement(db.products, req.body);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Mouvement de stock refusé.' });
+    }
+  });
+
+  // 10 ter. REÇUS
+  app.get('/api/admin/receipts', verifyAdmin, async (_req: Request, res: Response) => {
+    res.json({ success: true, receipts: listReceipts() });
+  });
+
+  app.post('/api/admin/receipts', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const db = await loadDatabase();
+      const receipt = createReceipt(db.products, req.body);
+      res.json({ success: true, receipt });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Création du reçu impossible.' });
+    }
+  });
+
+  app.post('/api/admin/receipts/:id/void', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const db = await loadDatabase();
+      const receipt = voidReceipt(db.products, req.params.id);
+      res.json({ success: true, receipt });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Annulation impossible.' });
+    }
   });
 
   // 11. Toggle Featured

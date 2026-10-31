@@ -297,6 +297,8 @@ export async function fetchSettingsFromSupabase(): Promise<Partial<SiteSettings>
       siteUrl: data.site_url,
       legalName: data.legal_name,
       legalInfo: data.legal_info,
+      nif: data.nif,
+      rccm: data.rccm,
       privacyText: data.privacy_text,
       heroTitle: data.hero_title,
       heroSubtitle: data.hero_subtitle,
@@ -406,6 +408,8 @@ export async function saveSettingsToSupabase(s: Partial<SiteSettings>): Promise<
     if (s.siteUrl !== undefined) payload.site_url = s.siteUrl;
     if (s.legalName !== undefined) payload.legal_name = s.legalName;
     if (s.legalInfo !== undefined) payload.legal_info = s.legalInfo;
+    if (s.nif !== undefined) payload.nif = s.nif;
+    if (s.rccm !== undefined) payload.rccm = s.rccm;
     if (s.privacyText !== undefined) payload.privacy_text = s.privacyText;
     if (s.heroTitle !== undefined) payload.hero_title = s.heroTitle;
     if (s.heroSubtitle !== undefined) payload.hero_subtitle = s.heroSubtitle;
@@ -443,6 +447,8 @@ export async function syncAllToSupabase(db: DatabaseSchema): Promise<{ success: 
       site_url: db.settings.siteUrl,
       legal_name: db.settings.legalName,
       legal_info: db.settings.legalInfo,
+      nif: db.settings.nif,
+      rccm: db.settings.rccm,
       privacy_text: db.settings.privacyText,
       hero_title: db.settings.heroTitle,
       hero_subtitle: db.settings.heroSubtitle,

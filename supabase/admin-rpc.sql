@@ -431,6 +431,369 @@ END;
 $$;
 
 -- -------------------------------------------------------------------------
+-- 4 bis. GESTION DE STOCK ET REÇUS
+--        Ces fonctions sont les seules à pouvoir lire/écrire le stock depuis
+--        un site statique. Elles vérifient le jeton administrateur en base.
+-- -------------------------------------------------------------------------
+
+-- Vue d'ensemble : produits + quantités + totaux + derniers mouvements.
+CREATE OR REPLACE FUNCTION public.admin_stock_overview(p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_items JSONB;
+  v_movements JSONB;
+  v_totals JSONB;
+BEGIN
+  PERFORM public.admin_assert(p_token);
+
+  SELECT COALESCE(jsonb_agg(row ORDER BY row->>'shop', row->>'name'), '[]'::jsonb)
+    INTO v_items
+    FROM (
+      SELECT jsonb_build_object(
+        'productId', p.id,
+        'shop', p.shop,
+        'name', p.name,
+        'price', p.price,
+        'costPrice', s.cost_price,
+        'quantity', COALESCE(s.quantity, 0),
+        'alertThreshold', COALESCE(s.alert_threshold, 3),
+        'updatedAt', COALESCE(s.updated_at, 0)
+      ) AS row
+      FROM public.products p
+      LEFT JOIN public.stock_items s ON s.product_id = p.id
+    ) t;
+
+  SELECT jsonb_build_object(
+    'lines', COUNT(*),
+    'quantity', COALESCE(SUM(COALESCE(s.quantity, 0)), 0),
+    'costValue', COALESCE(SUM(COALESCE(s.quantity, 0) * COALESCE(s.cost_price, 0)), 0),
+    'saleValue', COALESCE(SUM(COALESCE(s.quantity, 0) * COALESCE(p.price, 0)), 0),
+    'alertCount', COUNT(*) FILTER (
+      WHERE COALESCE(s.quantity, 0) > 0 AND COALESCE(s.quantity, 0) <= COALESCE(s.alert_threshold, 3)
+    ),
+    'outCount', COUNT(*) FILTER (WHERE COALESCE(s.quantity, 0) = 0)
+  )
+    INTO v_totals
+    FROM public.products p
+    LEFT JOIN public.stock_items s ON s.product_id = p.id;
+
+  SELECT COALESCE(jsonb_agg(m ORDER BY (m->>'createdAt')::BIGINT DESC), '[]'::jsonb)
+    INTO v_movements
+    FROM (
+      SELECT jsonb_build_object(
+        'id', id::TEXT,
+        'productId', product_id,
+        'productName', product_name,
+        'shop', shop,
+        'type', type,
+        'quantity', quantity,
+        'unitCost', unit_cost,
+        'reason', reason,
+        'note', note,
+        'receiptId', receipt_id,
+        'author', author,
+        'createdAt', created_at
+      ) AS m
+      FROM public.stock_movements
+      ORDER BY created_at DESC, id DESC
+      LIMIT 200
+    ) t;
+
+  RETURN jsonb_build_object('items', v_items, 'totals', v_totals, 'movements', v_movements);
+END;
+$$;
+
+-- Mouvement de stock. `quantity` est toujours positif, sauf pour un
+-- ajustement (delta signé). Le stock ne descend jamais sous zéro.
+CREATE OR REPLACE FUNCTION public.admin_stock_move(p_token TEXT, p JSONB)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_product_id TEXT := p->>'productId';
+  v_type TEXT := COALESCE(p->>'type', 'entree');
+  v_qty INT := COALESCE((p->>'quantity')::INT, 0);
+  v_current INT;
+  v_delta INT;
+  v_new INT;
+  v_name TEXT;
+  v_shop TEXT;
+  v_alert INT;
+BEGIN
+  PERFORM public.admin_assert(p_token);
+
+  IF v_product_id IS NULL OR v_product_id = '' THEN
+    RAISE EXCEPTION 'Produit requis.' USING ERRCODE = '22023';
+  END IF;
+  IF v_type NOT IN ('entree', 'sortie', 'vente', 'retour', 'inventaire', 'ajustement') THEN
+    RAISE EXCEPTION 'Type de mouvement inconnu.' USING ERRCODE = '22023';
+  END IF;
+  IF v_type <> 'ajustement' AND v_qty < 0 THEN
+    RAISE EXCEPTION 'La quantité doit être positive.' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT name, shop INTO v_name, v_shop FROM public.products WHERE id = v_product_id;
+  IF v_name IS NULL THEN
+    RAISE EXCEPTION 'Produit introuvable.' USING ERRCODE = 'P0002';
+  END IF;
+
+  INSERT INTO public.stock_items (product_id) VALUES (v_product_id)
+  ON CONFLICT (product_id) DO NOTHING;
+
+  SELECT quantity INTO v_current FROM public.stock_items WHERE product_id = v_product_id;
+  v_current := COALESCE(v_current, 0);
+
+  v_delta := CASE v_type
+    WHEN 'entree'     THEN v_qty
+    WHEN 'retour'     THEN v_qty
+    WHEN 'sortie'     THEN -v_qty
+    WHEN 'vente'      THEN -v_qty
+    WHEN 'inventaire' THEN v_qty - v_current
+    ELSE v_qty -- ajustement : delta signé fourni tel quel
+  END;
+
+  v_new := GREATEST(0, v_current + v_delta);
+  -- Delta réellement appliqué (une sortie plus grande que le stock est plafonnée).
+  v_delta := v_new - v_current;
+
+  UPDATE public.stock_items
+     SET quantity = v_new,
+         alert_threshold = COALESCE((p->>'alertThreshold')::INT, alert_threshold),
+         cost_price = COALESCE((p->>'costPrice')::NUMERIC, cost_price),
+         updated_at = (extract(epoch from now()) * 1000)::BIGINT
+   WHERE product_id = v_product_id;
+
+  IF v_delta <> 0 OR v_type = 'inventaire' THEN
+    INSERT INTO public.stock_movements (
+      product_id, product_name, shop, type, quantity, unit_cost,
+      reason, note, receipt_id, author, created_at
+    ) VALUES (
+      v_product_id, v_name, COALESCE(v_shop, ''), v_type, v_delta,
+      (p->>'unitCost')::NUMERIC,
+      COALESCE(p->>'reason', ''), COALESCE(p->>'note', ''),
+      NULLIF(p->>'receiptId', ''), COALESCE(p->>'author', ''),
+      (extract(epoch from now()) * 1000)::BIGINT
+    );
+  END IF;
+
+  RETURN jsonb_build_object(
+    'productId', v_product_id,
+    'quantity', v_new,
+    'delta', v_delta,
+    'alertThreshold', COALESCE((SELECT alert_threshold FROM public.stock_items WHERE product_id = v_product_id), 3)
+  );
+END;
+$$;
+
+-- Liste des reçus (du plus récent au plus ancien).
+CREATE OR REPLACE FUNCTION public.admin_list_receipts(p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_result JSONB;
+BEGIN
+  PERFORM public.admin_assert(p_token);
+
+  SELECT COALESCE(jsonb_agg(r ORDER BY (r->>'createdAt')::BIGINT DESC), '[]'::jsonb)
+    INTO v_result
+    FROM (
+      SELECT jsonb_build_object(
+        'id', id,
+        'number', number,
+        'clientName', client_name,
+        'clientPhone', client_phone,
+        'items', items,
+        'subtotal', subtotal,
+        'discount', discount,
+        'total', total,
+        'paymentMethod', payment_method,
+        'amountPaid', amount_paid,
+        'changeDue', change_due,
+        'note', note,
+        'status', status,
+        'affectStock', affect_stock,
+        'author', author,
+        'createdAt', created_at,
+        'updatedAt', updated_at
+      ) AS r
+      FROM public.receipts
+    ) t;
+
+  RETURN v_result;
+END;
+$$;
+
+-- Création d'un reçu. Les montants sont TOUJOURS recalculés en base à partir
+-- des lignes : un total falsifié côté navigateur est ignoré. Les quantités
+-- vendues sont déduites du stock dans la même transaction.
+CREATE OR REPLACE FUNCTION public.admin_save_receipt(p_token TEXT, p JSONB)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_id TEXT := NULLIF(p->>'id', '');
+  v_number TEXT;
+  v_items JSONB := COALESCE(p->'items', '[]'::jsonb);
+  v_subtotal NUMERIC := 0;
+  v_discount NUMERIC := GREATEST(0, COALESCE((p->>'discount')::NUMERIC, 0));
+  v_total NUMERIC;
+  v_paid NUMERIC := GREATEST(0, COALESCE((p->>'amountPaid')::NUMERIC, 0));
+  v_affect BOOLEAN := COALESCE((p->>'affectStock')::BOOLEAN, true);
+  v_status TEXT;
+  v_created BIGINT := (extract(epoch from now()) * 1000)::BIGINT;
+  v_year TEXT := to_char(now(), 'YYYY');
+  v_seq INT;
+  v_line JSONB;
+  v_existing TEXT;
+BEGIN
+  PERFORM public.admin_assert(p_token);
+
+  IF jsonb_array_length(v_items) = 0 THEN
+    RAISE EXCEPTION 'Un reçu doit contenir au moins un article.' USING ERRCODE = '22023';
+  END IF;
+
+  -- Recalcul des totaux côté serveur.
+  SELECT COALESCE(SUM(
+           GREATEST(0, COALESCE((item->>'quantity')::INT, 0)) *
+           GREATEST(0, COALESCE((item->>'unitPrice')::NUMERIC, 0))
+         ), 0)
+    INTO v_subtotal
+    FROM jsonb_array_elements(v_items) AS item;
+
+  v_total := GREATEST(0, v_subtotal - v_discount);
+
+  v_status := CASE
+    WHEN v_paid >= v_total AND v_total > 0 THEN 'paye'
+    WHEN v_paid > 0 THEN 'partiel'
+    ELSE 'credit'
+  END;
+
+  IF v_id IS NULL THEN
+    v_id := 'rec-' || v_created::TEXT || '-' || substr(md5(random()::TEXT), 1, 6);
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.receipts WHERE id = v_id) THEN
+    RAISE EXCEPTION 'Ce reçu existe déjà : un reçu ne se modifie pas, il s’annule.'
+      USING ERRCODE = '23505';
+  END IF;
+
+  -- Numérotation séquentielle annuelle : REC-2026-0001
+  SELECT COUNT(*) + 1 INTO v_seq FROM public.receipts WHERE number LIKE 'REC-' || v_year || '-%';
+  LOOP
+    v_number := 'REC-' || v_year || '-' || lpad(v_seq::TEXT, 4, '0');
+    SELECT number INTO v_existing FROM public.receipts WHERE number = v_number;
+    EXIT WHEN v_existing IS NULL;
+    v_seq := v_seq + 1;
+  END LOOP;
+
+  INSERT INTO public.receipts (
+    id, number, client_name, client_phone, items, subtotal, discount, total,
+    payment_method, amount_paid, change_due, note, status, affect_stock,
+    author, created_at, updated_at
+  ) VALUES (
+    v_id, v_number,
+    COALESCE(p->>'clientName', ''),
+    COALESCE(p->>'clientPhone', ''),
+    v_items, v_subtotal, v_discount, v_total,
+    COALESCE(NULLIF(p->>'paymentMethod', ''), 'espece'),
+    v_paid, GREATEST(0, v_paid - v_total),
+    COALESCE(p->>'note', ''),
+    v_status, v_affect,
+    COALESCE(p->>'author', ''),
+    v_created, v_created
+  );
+
+  -- Déduction du stock, article par article, dans la même transaction.
+  IF v_affect THEN
+    FOR v_line IN SELECT * FROM jsonb_array_elements(v_items)
+    LOOP
+      IF COALESCE(v_line->>'productId', '') <> '' THEN
+        PERFORM public.admin_stock_move(p_token, jsonb_build_object(
+          'productId', v_line->>'productId',
+          'type', 'vente',
+          'quantity', GREATEST(0, COALESCE((v_line->>'quantity')::INT, 0)),
+          'receiptId', v_id,
+          'reason', 'Reçu ' || v_number,
+          'author', COALESCE(p->>'author', '')
+        ));
+      END IF;
+    END LOOP;
+  END IF;
+
+  RETURN (
+    SELECT jsonb_build_object(
+      'id', id, 'number', number, 'clientName', client_name, 'clientPhone', client_phone,
+      'items', items, 'subtotal', subtotal, 'discount', discount, 'total', total,
+      'paymentMethod', payment_method, 'amountPaid', amount_paid, 'changeDue', change_due,
+      'note', note, 'status', status, 'affectStock', affect_stock, 'author', author,
+      'createdAt', created_at, 'updatedAt', updated_at
+    )
+    FROM public.receipts WHERE id = v_id
+  );
+END;
+$$;
+
+-- Annulation : le reçu reste dans l'historique (statut « annule ») et les
+-- quantités vendues retournent en stock.
+CREATE OR REPLACE FUNCTION public.admin_void_receipt(p_token TEXT, p_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_receipt public.receipts;
+  v_line JSONB;
+  v_author TEXT;
+BEGIN
+  PERFORM public.admin_assert(p_token);
+
+  SELECT * INTO v_receipt FROM public.receipts WHERE id = p_id;
+  IF v_receipt.id IS NULL THEN
+    RAISE EXCEPTION 'Reçu introuvable.' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_receipt.status = 'annule' THEN
+    RETURN jsonb_build_object('id', v_receipt.id, 'status', 'annule');
+  END IF;
+
+  SELECT author INTO v_author FROM public.admin_sessions WHERE token = p_token;
+
+  IF v_receipt.affect_stock THEN
+    FOR v_line IN SELECT * FROM jsonb_array_elements(v_receipt.items)
+    LOOP
+      IF COALESCE(v_line->>'productId', '') <> '' THEN
+        PERFORM public.admin_stock_move(p_token, jsonb_build_object(
+          'productId', v_line->>'productId',
+          'type', 'retour',
+          'quantity', GREATEST(0, COALESCE((v_line->>'quantity')::INT, 0)),
+          'receiptId', p_id,
+          'reason', 'Annulation du reçu ' || v_receipt.number
+        ));
+      END IF;
+    END LOOP;
+  END IF;
+
+  UPDATE public.receipts
+     SET status = 'annule',
+         updated_at = (extract(epoch from now()) * 1000)::BIGINT
+   WHERE id = p_id;
+
+  RETURN jsonb_build_object('id', p_id, 'status', 'annule');
+END;
+$$;
+
+-- -------------------------------------------------------------------------
 -- 5. Droits d'exécution
 -- -------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION public.admin_assert(TEXT) FROM PUBLIC;
@@ -447,6 +810,11 @@ REVOKE ALL ON FUNCTION public.admin_save_settings(TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_save_featured(TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_save_reference(TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_delete_reference(TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_stock_overview(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_stock_move(TEXT, JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_list_receipts(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_save_receipt(TEXT, JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_void_receipt(TEXT, TEXT) FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION public.admin_login(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_check(TEXT) TO anon, authenticated;
@@ -461,3 +829,8 @@ GRANT EXECUTE ON FUNCTION public.admin_save_settings(TEXT, JSONB) TO anon, authe
 GRANT EXECUTE ON FUNCTION public.admin_save_featured(TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_save_reference(TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_delete_reference(TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_stock_overview(TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_stock_move(TEXT, JSONB) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_list_receipts(TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_save_receipt(TEXT, JSONB) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_void_receipt(TEXT, TEXT) TO anon, authenticated;

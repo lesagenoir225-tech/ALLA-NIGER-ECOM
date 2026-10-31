@@ -28,12 +28,16 @@ import {
   Copy,
   ExternalLink,
   RefreshCw,
+  Package,
+  ReceiptText,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Product, ShopType, TextileBrand, SiteSettings } from '../types';
 import { formatPrice, slugify, isValidWhatsApp, normalizeWhatsApp } from '../utils/format';
 import { ProductImage } from '../components/ui/ProductImage';
 import { ExperienceAdmin } from '../components/admin/ExperienceAdmin';
+import { StockManager } from '../components/admin/StockManager';
+import { ReceiptsManager } from '../components/admin/ReceiptsManager';
 import { useSeo } from '../utils/seo';
 import {
   checkSupabaseHealth,
@@ -53,7 +57,9 @@ type AdminTab =
   | 'brands'
   | 'settings'
   | 'media'
-  | 'experience';
+  | 'experience'
+  | 'stock'
+  | 'receipts';
 
 export function Admin() {
   const {
@@ -142,7 +148,7 @@ export function Admin() {
     const success = await login(loginPassword);
     setIsSubmittingLogin(false);
     if (!success) {
-      setLoginError('Mot de passe incorrect. (Par défaut : alffa2025)');
+      setLoginError('Mot de passe incorrect.');
     }
   };
 
@@ -192,8 +198,15 @@ export function Admin() {
             </button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-[var(--line)] text-center text-xs text-[var(--muted)]">
-            Mot de passe d'initialisation : <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono">alffa2025</code>
+          <div className="mt-6 pt-4 border-t border-[var(--line)] text-left text-xs text-[var(--muted)]">
+            <p className="flex items-start gap-2">
+              <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+              <span>
+                Aucun mot de passe n’est affiché ici. En cas d’oubli, utilisez
+                « Changer le mot de passe » depuis une session ouverte, ou
+                réinitialisez l’empreinte en base (voir la documentation).
+              </span>
+            </p>
           </div>
         </div>
       </main>
@@ -258,6 +271,8 @@ export function Admin() {
               { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
               { id: 'electronique', label: 'Produits Électronique', icon: Smartphone },
               { id: 'textile', label: 'Produits Textile', icon: Sparkles },
+              { id: 'stock', label: 'Stock', icon: Package },
+              { id: 'receipts', label: 'Reçus', icon: ReceiptText },
               { id: 'featured', label: 'Produits à la une', icon: Star },
               { id: 'brands', label: 'Marques textiles', icon: Tag },
               { id: 'experience', label: 'Expérience entrepreneuriale', icon: Briefcase },
@@ -507,6 +522,12 @@ export function Admin() {
 
         {/* TAB 6: SETTINGS FORM */}
         {activeTab === 'experience' && <ExperienceAdmin />}
+
+        {/* TAB STOCK : quantités, valeurs, mouvements */}
+        {activeTab === 'stock' && <StockManager />}
+
+        {/* TAB REÇUS : encaissement, impression, partage */}
+        {activeTab === 'receipts' && <ReceiptsManager />}
 
         {activeTab === 'settings' && (
           <SettingsManager
@@ -1422,6 +1443,33 @@ function SettingsManager({
               placeholder="ex. ALFFA NIGER SARL..."
               className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)]"
             />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
+                NIF (impression sur les reçus)
+              </label>
+              <input
+                type="text"
+                value={settings.nif || ''}
+                onChange={(e) => onChange('nif', e.target.value)}
+                placeholder="ex. 48004 / P NIAMEY"
+                className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
+                RCCM
+              </label>
+              <input
+                type="text"
+                value={settings.rccm || ''}
+                onChange={(e) => onChange('rccm', e.target.value)}
+                placeholder="ex. NI-NIM-2019-B-1234"
+                className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)]"
+              />
+            </div>
           </div>
 
           <div>

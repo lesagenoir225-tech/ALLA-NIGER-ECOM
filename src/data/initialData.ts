@@ -19,8 +19,10 @@ export const INITIAL_SETTINGS: SiteSettings = {
   mapsElectronique: DEFAULT_MAPS_ELECTRONIQUE,
   mapsTextile: DEFAULT_MAPS_TEXTILE,
   siteUrl: 'https://alffaniger.com',
-  legalName: '',
+  legalName: 'ALFFA NIGER',
   legalInfo: '',
+  nif: '48004 / P NIAMEY',
+  rccm: '',
   privacyText: '',
   heroTitle: 'La qualité au meilleur prix.',
   heroSubtitle:
