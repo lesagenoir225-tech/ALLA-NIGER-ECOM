@@ -80,10 +80,10 @@ g.fetch = async (input: any, init?: any) => {
     const fn = url.split('/rest/v1/rpc/')[1];
     rpcCalls.push({ fn, body });
 
-    if (fn === 'admin_login_v2') {
+    if (fn === 'admin_login_v3' || fn === 'admin_login_v2') {
       if (legacyOnly) {
         // Base pas encore mise à jour : la fonction n'existe pas.
-        return json({ code: 'PGRST202', message: "Could not find the function public.admin_login_v2(p_password) in the schema cache" }, 404);
+        return json({ code: 'PGRST202', message: `Could not find the function public.${fn} in the schema cache` }, 404);
       }
       if (loginMode.kind === 'offline' && !offlineOnce) {
         offlineOnce = true;
@@ -94,7 +94,13 @@ g.fetch = async (input: any, init?: any) => {
       if (loginMode.kind === 'password') {
         return json({ ok: false, reason: 'password', message: loginMode.message, remaining: 9 });
       }
-      return json({ ok: true, token: 'jeton-connexion-0123456789abcdef' });
+      return json({
+        ok: true,
+        token: 'jeton-connexion-0123456789abcdef',
+        role: 'gerant',
+        username: 'gerant',
+        displayName: 'Le Gérant',
+      });
     }
 
     if (fn === 'admin_login') {
@@ -123,7 +129,10 @@ const { createRoot } = await import('react-dom/client');
 
 const results: { name: string; ok: boolean; detail?: string }[] = [];
 const check = (name: string, ok: boolean, detail = '') => results.push({ name, ok, detail });
-const loginCalls = () => rpcCalls.filter((c) => c.fn === 'admin_login_v2');
+// La connexion interroge d'abord admin_login_v3 (identifiant + rôle), puis
+// admin_login_v2 sur une base plus ancienne : les deux comptent comme « un appel ».
+const loginCalls = () =>
+  rpcCalls.filter((c) => c.fn === 'admin_login_v3' || c.fn === 'admin_login_v2');
 const legacyCalls = () => rpcCalls.filter((c) => c.fn === 'admin_login');
 
 // --- 1. Normalisation du mot de passe ---------------------------------------
@@ -178,9 +187,16 @@ check(
   !/(mot de passe\s+(par défaut|d[’']initialisation)|initialisation\s*:)/i.test(initialText),
   initialText.slice(0, 200),
 );
+// Le champ identifiant peut être pré-rempli (« gerant »), jamais le mot de passe :
+// on ne contrôle donc que les champs de type « password ».
+const passwordInputs = Array.from(
+  document.querySelectorAll('input[type="password"]'),
+) as HTMLInputElement[];
 check(
   'Masquage : aucun mot de passe en clair dans le HTML',
-  !/value="[^"]{4,}"/.test(document.querySelector('form')?.innerHTML || ''),
+  passwordInputs.length > 0 &&
+    passwordInputs.every((input) => input.value.length === 0) &&
+    !/type="password"[^>]*value="[^"]{4,}"/.test(document.querySelector('form')?.innerHTML || ''),
 );
 check('Clavier : pas de majuscule automatique', typePassword('').getAttribute('autocapitalize') === 'none');
 check('Clavier : correction automatique désactivée', typePassword('').getAttribute('autocorrect') === 'off');

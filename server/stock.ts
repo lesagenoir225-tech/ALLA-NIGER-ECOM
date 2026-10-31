@@ -15,6 +15,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Product } from '../src/types';
+import type { VerifiedReceipt } from '../src/types/reports';
 import type {
   Receipt,
   ReceiptLine,
@@ -240,6 +241,18 @@ export interface ReceiptInput {
   author?: string;
 }
 
+/** Code court imprimé sur le reçu, pour la vérification publique. */
+function verifyCode(existing: Receipt[]): string {
+  const taken = new Set(existing.map((r) => (r.verifyCode || '').toUpperCase()));
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const code = Array.from({ length: 8 }, () =>
+      '0123456789ABCDEF'[Math.floor(Math.random() * 16)]
+    ).join('');
+    if (!taken.has(code)) return code;
+  }
+  return `${Date.now()}`.slice(-8);
+}
+
 /** Numéro séquentiel annuel : REC-2026-0001. */
 function nextReceiptNumber(existing: Receipt[]): string {
   const year = String(new Date().getFullYear());
@@ -308,6 +321,7 @@ export function createReceipt(products: Product[], input: ReceiptInput): Receipt
     note: input.note || '',
     status,
     affectStock: input.affectStock !== false,
+    verifyCode: verifyCode(file.receipts),
     author: input.author || '',
     createdAt: now,
     updatedAt: now,
@@ -357,6 +371,38 @@ export function voidReceipt(products: Product[], id: string): Receipt {
   receipt.updatedAt = Date.now();
   saveReceiptsFile(file);
   return receipt;
+}
+
+/** Vérification publique d'un reçu à partir de son code (aucun nom complet). */
+export function verifyReceiptCode(code: string): VerifiedReceipt {
+  const clean = String(code || '').trim().toUpperCase();
+  if (!clean) return { found: false };
+
+  const receipt = readReceiptsFile().receipts.find(
+    (r) => (r.verifyCode || '').toUpperCase() === clean
+  );
+  if (!receipt) return { found: false };
+
+  const initials = (receipt.clientName || 'Client')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word[0]?.toUpperCase() || '')
+    .join('')
+    .slice(0, 2);
+
+  return {
+    found: true,
+    number: receipt.number,
+    issuedAt: receipt.createdAt,
+    total: receipt.total,
+    status: receipt.status,
+    clientInitials: initials,
+    items: receipt.items.map((line) => ({
+      name: line.name,
+      quantity: line.quantity,
+      total: line.total,
+    })),
+  };
 }
 
 /** Retire les lignes de stock d'un produit supprimé du catalogue. */

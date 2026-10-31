@@ -327,6 +327,60 @@ async function uploadViaStorage(body: any, token: string): Promise<ApiResponse> 
 // ---------------------------------------------------------------------------
 // Point d'entrée
 // ---------------------------------------------------------------------------
+
+/** Les RPC renvoient des NUMERIC sous forme de chaînes : on renvoie des nombres. */
+const num = (value: unknown): number => (value === null || value === undefined ? 0 : Number(value));
+
+function normalizeStats(raw: any) {
+  const k = raw?.kpis || {};
+  return {
+    from: raw?.from ? new Date(raw.from).getTime() : Date.now(),
+    to: raw?.to ? new Date(raw.to).getTime() : Date.now(),
+    kpis: {
+      revenue: num(k.revenue),
+      receipts: num(k.receipts),
+      paid: num(k.paid),
+      receivable: num(k.receivable),
+      discounts: num(k.discounts),
+      avgTicket: num(k.avgTicket),
+    },
+    daily: (raw?.daily || []).map((d: any) => ({ date: d.date, revenue: num(d.revenue), count: num(d.count) })),
+    topProducts: (raw?.topProducts || []).map((p: any) => ({
+      productId: p.productId || '',
+      name: p.name || 'Article',
+      quantity: num(p.quantity),
+      revenue: num(p.revenue),
+    })),
+    byPayment: (raw?.byPayment || []).map((p: any) => ({
+      method: p.method || 'espece',
+      revenue: num(p.revenue),
+      count: num(p.count),
+    })),
+    topClients: (raw?.topClients || []).map((c: any) => ({
+      name: c.name || 'Client de passage',
+      revenue: num(c.revenue),
+      count: num(c.count),
+    })),
+  };
+}
+
+function normalizeFinance(raw: any) {
+  return {
+    from: raw?.from ? new Date(raw.from).getTime() : Date.now(),
+    to: raw?.to ? new Date(raw.to).getTime() : Date.now(),
+    revenue: num(raw?.revenue),
+    cogs: num(raw?.cogs),
+    grossMargin: num(raw?.grossMargin),
+    expenses: num(raw?.expenses),
+    netProfit: num(raw?.netProfit),
+    receivable: num(raw?.receivable),
+    expensesByCategory: (raw?.expensesByCategory || []).map((c: any) => ({
+      category: c.category || 'autre',
+      total: num(c.total),
+    })),
+  };
+}
+
 export async function api(
   path: string,
   init?: RequestInit,
@@ -349,15 +403,44 @@ export async function api(
       // et l'anti-force brute ne comptait donc rien).
       let result: any;
       try {
-        result = await callRpc<any>('admin_login_v2', { p_password: body.password });
+        // v3 : identifiant + rôle (gérant / vendeur).
+        result = await callRpc<any>('admin_login_v3', {
+          p_username: body.username ?? '',
+          p_password: body.password,
+        });
       } catch (error: any) {
         const message = String(error?.message || '');
-        if (/admin_login_v2|schema cache|does not exist|PGRST202/i.test(message)) {
-          // Base pas encore mise à jour : on retombe sur le contrat historique.
-          const legacy = await callRpc<string>('admin_login', { p_password: body.password });
-          return ok({ success: true, token: legacy });
+        if (!/admin_login_v3|admin_login_v2|schema cache|does not exist|PGRST202/i.test(message)) {
+          throw error;
         }
-        throw error;
+        try {
+          result = await callRpc<any>('admin_login_v2', { p_password: body.password });
+        } catch (error2: any) {
+          const message2 = String(error2?.message || '');
+          if (!/admin_login_v2|schema cache|does not exist|PGRST202/i.test(message2)) throw error2;
+          // Base pas encore mise à jour : contrat historique.
+          const legacy = await callRpc<any>('admin_login', { p_password: body.password });
+          if (legacy && typeof legacy === 'object') {
+            if (!legacy.ok) {
+              return makeResponse(
+                {
+                  error: legacy.message || 'Identifiant ou mot de passe incorrect.',
+                  reason: legacy.reason,
+                  remaining: legacy.remaining,
+                },
+                legacy.reason === 'locked' ? 429 : 401,
+              );
+            }
+            return ok({
+              success: true,
+              token: legacy.token,
+              role: legacy.role || 'gerant',
+              username: legacy.username,
+              displayName: legacy.displayName,
+            });
+          }
+          return ok({ success: true, token: legacy, role: 'gerant' });
+        }
       }
 
       if (result && typeof result === 'object' && 'ok' in result) {
@@ -372,9 +455,36 @@ export async function api(
             locked ? 429 : 401,
           );
         }
-        return ok({ success: true, token: result.token });
+        return ok({
+          success: true,
+          token: result.token,
+          role: result.role || 'gerant',
+          username: result.username,
+          displayName: result.displayName,
+        });
       }
-      return ok({ success: true, token: result });
+
+      // Réponse inexploitable : la fonction v3 n'existe pas encore vraiment.
+      // On retente avec v2 plutôt que de renvoyer un jeton vide.
+      try {
+        const fallback = await callRpc<any>('admin_login_v2', { p_password: body.password });
+        if (fallback && typeof fallback === 'object' && 'ok' in fallback) {
+          if (!fallback.ok) {
+            return makeResponse(
+              {
+                error: fallback.message || 'Mot de passe incorrect.',
+                reason: fallback.reason,
+                remaining: fallback.remaining,
+              },
+              fallback.reason === 'locked' ? 429 : 401,
+            );
+          }
+          return ok({ success: true, token: fallback.token, role: 'gerant' });
+        }
+      } catch {
+        // On continue vers l'ancien contrat ci-dessous.
+      }
+      return ok({ success: true, token: result, role: 'gerant' });
     }
 
     if (path === '/api/admin/check') {
@@ -607,6 +717,134 @@ export async function api(
       const id = path.split('/')[4];
       const receipt = await callRpc<any>('admin_void_receipt', { p_token: token, p_id: id });
       return ok({ success: true, receipt });
+    }
+
+    // --- Inventaire (quantité absolue) ---
+    if (path === '/api/admin/stock/set' && method === 'POST') {
+      await callRpc('admin_stock_move', {
+        p_token: token,
+        p: {
+          productId: body.productId,
+          type: 'inventaire',
+          quantity: Number(body.quantity || 0),
+          costPrice: body.costPrice ?? null,
+          alertThreshold: body.alertThreshold ?? null,
+          reason: body.reason ?? 'Inventaire',
+        },
+      });
+      return ok({ success: true });
+    }
+
+    // --- Dépenses ---
+    const sp = new URLSearchParams(path.split('?')[1] || '');
+    const toIso = (value: string | null) =>
+      value && Number.isFinite(Number(value)) ? new Date(Number(value)).toISOString() : null;
+
+    if (path.split('?')[0] === '/api/admin/expenses' && method === 'GET') {
+      const expenses = await callRpc<any[]>('admin_list_expenses', {
+        p_token: token,
+        p_from: toIso(sp.get('from')),
+        p_to: toIso(sp.get('to')),
+      });
+      return ok({ success: true, expenses: expenses || [] });
+    }
+
+    if (path === '/api/admin/expenses' && method === 'POST') {
+      const expense = await callRpc<any>('admin_save_expense', {
+        p_token: token,
+        p: {
+          id: body.id,
+          label: body.label,
+          category: body.category || 'autre',
+          amount: Number(body.amount || 0),
+          spentAt: body.spentAt ? new Date(Number(body.spentAt)).toISOString() : null,
+          note: body.note ?? '',
+        },
+      });
+      return ok({ success: true, expense });
+    }
+
+    if (/^\/api\/admin\/expenses\/[^/]+$/.test(path) && method === 'DELETE') {
+      await callRpc('admin_delete_expense', { p_token: token, p_id: path.split('/')[4] });
+      return ok({ success: true });
+    }
+
+    // --- Rapports ---
+    if (path.split('?')[0] === '/api/admin/reports/stats' && method === 'GET') {
+      const stats = await callRpc<any>('admin_sales_stats', {
+        p_token: token,
+        p_from: toIso(sp.get('from')),
+        p_to: toIso(sp.get('to')),
+      });
+      return ok({ success: true, ...normalizeStats(stats) });
+    }
+
+    if (path.split('?')[0] === '/api/admin/reports/finance' && method === 'GET') {
+      const finance = await callRpc<any>('admin_finance_overview', {
+        p_token: token,
+        p_from: toIso(sp.get('from')),
+        p_to: toIso(sp.get('to')),
+      });
+      return ok({ success: true, ...normalizeFinance(finance) });
+    }
+
+    if (path === '/api/admin/export' && method === 'GET') {
+      const data = await callRpc<any>('admin_export_all', { p_token: token });
+      return ok(data ?? {});
+    }
+
+    // --- Sauvegarde automatique ---
+    if (path === '/api/admin/backups' && method === 'GET') {
+      const data = await callRpc<any>('admin_backup_list', { p_token: token });
+      return ok(data || { backups: [] });
+    }
+
+    if (path === '/api/admin/backups' && method === 'POST') {
+      const result = await callRpc<any>('admin_backup_now', { p_token: token });
+      return ok({ success: true, ...(result || {}) });
+    }
+
+    if (/^\/api\/admin\/backups\/[^/]+$/.test(path) && method === 'GET') {
+      const day = path.split('/')[4];
+      const payload = await callRpc<any>('admin_backup_get', { p_token: token, p_day: day });
+      return ok(payload || {});
+    }
+
+    // --- Vérification publique d'un reçu (sans jeton) ---
+    if (path === '/api/public/verify-receipt' && method === 'POST') {
+      const result = await callRpc<any>('public_verify_receipt', { p_code: body.code ?? '' });
+      return ok(result ?? { found: false });
+    }
+
+    // --- Comptes administrateurs ---
+    if (path === '/api/admin/me' && method === 'GET') {
+      const identity = await callRpc<any>('admin_role', { p_token: token });
+      return ok(identity ?? { role: 'gerant', username: 'gerant', displayName: 'Le Gérant' });
+    }
+
+    if (path === '/api/admin/accounts' && method === 'GET') {
+      const accounts = await callRpc<any[]>('admin_list_accounts', { p_token: token });
+      return ok({ success: true, accounts: accounts || [] });
+    }
+
+    if (path === '/api/admin/accounts' && method === 'POST') {
+      const account = await callRpc<any>('admin_save_account', {
+        p_token: token,
+        p: {
+          id: body.id,
+          username: body.username,
+          displayName: body.displayName ?? '',
+          role: body.role ?? 'vendeur',
+          active: body.active !== false,
+          password: body.password ?? '',
+        },
+      });
+      return ok({ success: true, account });
+    }
+
+    if (/^\/api\/admin\/accounts\/[^/]+$/.test(path) && method === 'DELETE') {
+      await callRpc('admin_delete_account', { p_token: token, p_id: path.split('/')[4] });
+      return ok({ success: true });
     }
 
     // --- Téléversement : Supabase Storage via la fonction Edge « upload » ---

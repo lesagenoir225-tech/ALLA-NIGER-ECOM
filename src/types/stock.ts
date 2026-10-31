@@ -114,6 +114,8 @@ export interface Receipt {
   status: ReceiptStatus;
   /** Vrai si les quantités ont été déduites du stock. */
   affectStock: boolean;
+  /** Code court imprimé sur le reçu, pour vérification publique. */
+  verifyCode?: string;
   author: string;
   createdAt: number;
   updatedAt: number;

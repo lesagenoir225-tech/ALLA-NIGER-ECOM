@@ -8,6 +8,7 @@ import React, {
   ReactNode,
 } from 'react';
 import { DatabaseSchema, Product, ShopType, SiteSettings, TextileBrand, BtpProject } from '../types';
+import type { AdminIdentity, AdminRole } from '../types/reports';
 import {
   INITIAL_DATABASE,
   INITIAL_SETTINGS,
@@ -37,7 +38,7 @@ import {
 export type LoginFailureReason = 'password' | 'locked' | 'network';
 
 export type LoginResult =
-  | { ok: true }
+  | { ok: true; role?: AdminRole; token?: string }
   | { ok: false; reason: LoginFailureReason; message: string; remaining?: number };
 
 interface NotificationState {
@@ -74,7 +75,10 @@ interface StoreContextType {
   saveBtpProject: (project: BtpProject) => Promise<boolean>;
   deleteBtpProject: (id: string) => Promise<boolean>;
   uploadImage: (file: File) => Promise<string>;
-  login: (password: string) => Promise<LoginResult>;
+  login: (password: string, username?: string) => Promise<LoginResult>;
+  /** Rôle du compte connecté : le vendeur n'accède pas aux finances ni à l'équipe. */
+  role: AdminRole;
+  identity: AdminIdentity | null;
   logout: () => void;
   changePassword: (newPassword: string) => Promise<boolean>;
   resetDatabase: () => Promise<boolean>;
@@ -90,6 +94,7 @@ const StoreContext = createContext<StoreContextType | null>(null);
 
 const STORAGE_KEY_DATA = 'alffa_niger_data_v3';
 const STORAGE_KEY_TOKEN = 'alffa_niger_admin_token';
+const STORAGE_KEY_ROLE = 'alffa_niger_admin_role';
 
 /**
  * Retire les espaces parasites et les caractères invisibles d'un mot de passe.
@@ -163,6 +168,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return localStorage.getItem(STORAGE_KEY_TOKEN);
   });
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [role, setRole] = useState<AdminRole>(() => {
+    const stored = localStorage.getItem(STORAGE_KEY_ROLE);
+    return stored === 'vendeur' ? 'vendeur' : 'gerant';
+  });
+  const [identity, setIdentity] = useState<AdminIdentity | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [supabaseHealth, setSupabaseHealth] = useState<SupabaseHealth | null>(null);
@@ -314,10 +324,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       if (authenticated === false) {
         localStorage.removeItem(STORAGE_KEY_TOKEN);
+        localStorage.removeItem(STORAGE_KEY_ROLE);
         setToken(null);
         setIsAdmin(false);
+        setRole('gerant');
+        setIdentity(null);
       } else if (authenticated === true) {
         setIsAdmin(true);
+
+        // Rôle et nom affiché : le vendeur ne voit ni finances ni équipe.
+        try {
+          const res = await api('/api/admin/me', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const me = await res.json();
+            const nextRole: AdminRole = me?.role === 'vendeur' ? 'vendeur' : 'gerant';
+            setRole(nextRole);
+            localStorage.setItem(STORAGE_KEY_ROLE, nextRole);
+            setIdentity({
+              role: nextRole,
+              username: me?.username || 'gerant',
+              displayName: me?.displayName || 'Le Gérant',
+            });
+          }
+        } catch {
+          setRole((localStorage.getItem(STORAGE_KEY_ROLE) as AdminRole) || 'gerant');
+        }
       }
       // authenticated === null : on conserve l'état courant (session gardée).
     }
@@ -792,41 +825,70 @@ async function errorMessage(res: ApiResponse, fallback: string): Promise<string>
    * insécable ou un caractère invisible (copier-coller depuis WhatsApp).
    */
   const login = useCallback(
-    async (rawPassword: string): Promise<LoginResult> => {
+    async (rawPassword: string, rawUsername?: string): Promise<LoginResult> => {
       const password = normalizePassword(rawPassword);
+      const username = String(rawUsername || '').trim().toLowerCase();
 
       if (!password) {
         return { ok: false, reason: 'password', message: 'Veuillez saisir le mot de passe.' };
       }
 
-      const attempt = async (options?: { staticOnly?: boolean }) => {
+      /**
+       * Une tentative de connexion.
+       *
+       * Le motif d'échec est déduit d'abord du CODE HTTP (401 = identifiants
+       * refusés, 429 = trop de tentatives, autre = réseau). Auparavant il était
+       * déduit du texte du message : une page HTML d'erreur contenant les mots
+       * « mot de passe incorrect » faisait afficher cette phrase alors que le
+       * mot de passe n'avait jamais été vérifié.
+       */
+      const attempt = async (options?: { staticOnly?: boolean }): Promise<LoginResult> => {
         const res = await api(
           '/api/admin/login',
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password }),
+            body: JSON.stringify({ password, username }),
           },
           options,
         );
 
-        if (!res.ok) {
-          const message = await errorMessage(res, 'Mot de passe incorrect.');
-          const reason: LoginFailureReason = /trop de tentatives|blocage temporaire|locked/i.test(message)
-            ? 'locked'
-            : /mot de passe incorrect|identifiants|unauthori/i.test(message)
-              ? 'password'
-              : 'network';
+        let raw = '';
+        let data: any = null;
+        try {
+          raw = await res.text();
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          data = null;
+        }
+
+        // Page HTML renvoyée alors qu'on croyait parler à un serveur Node :
+        // le site est en réalité statique. On rejoue la requête par la base.
+        const looksLikeHtml = !data && /<!doctype|<html/i.test(raw);
+        if (looksLikeHtml && !options?.staticOnly) {
+          return attempt({ staticOnly: true });
+        }
+
+        if (!res.ok || data?.ok === false) {
+          const reason: LoginFailureReason =
+            res.status === 429 || data?.reason === 'locked'
+              ? 'locked'
+              : res.status === 401 || data?.reason === 'password'
+                ? 'password'
+                : 'network';
+
+          const message =
+            data?.error ||
+            data?.message ||
+            (reason === 'password'
+              ? 'Identifiant ou mot de passe incorrect.'
+              : reason === 'locked'
+                ? 'Trop de tentatives échouées. Patientez quelques minutes.'
+                : 'Connexion impossible : la base de données ne répond pas. Vérifiez votre connexion internet.');
+
           return { ok: false as const, reason, message };
         }
 
-        let data: any;
-        try {
-          data = await res.json();
-        } catch {
-          // Le serveur Node a répondu une page HTML : on repasse par la base.
-          return attempt({ staticOnly: true });
-        }
         if (!data?.token) {
           return {
             ok: false as const,
@@ -834,18 +896,30 @@ async function errorMessage(res: ApiResponse, fallback: string): Promise<string>
             message: 'Réponse inattendue du serveur. Réessayez dans un instant.',
           };
         }
-        return { ok: true as const, token: data.token as string };
+
+        return {
+          ok: true as const,
+          token: data.token as string,
+          role: (data.role === 'vendeur' ? 'vendeur' : 'gerant') as AdminRole,
+        };
       };
 
       for (let i = 0; i < 2; i += 1) {
         try {
           const result = await attempt();
           if (result.ok) {
-            localStorage.setItem(STORAGE_KEY_TOKEN, result.token);
-            setToken(result.token);
+            const nextToken = String(result.token || '');
+            localStorage.setItem(STORAGE_KEY_TOKEN, nextToken);
+            const nextRole: AdminRole = result.role === 'vendeur' ? 'vendeur' : 'gerant';
+            localStorage.setItem(STORAGE_KEY_ROLE, nextRole);
+            setToken(nextToken);
+            setRole(nextRole);
             setIsAdmin(true);
-            showNotification('success', 'Connexion administrateur réussie.');
-            return { ok: true };
+            showNotification(
+              'success',
+              nextRole === 'vendeur' ? 'Connexion vendeur réussie.' : 'Connexion gérant réussie.'
+            );
+            return { ok: true, role: nextRole };
           }
 
           // Une coupure réseau d'un instant : une seule nouvelle tentative.
@@ -889,8 +963,11 @@ async function errorMessage(res: ApiResponse, fallback: string): Promise<string>
       headers: authHeaders(),
     }).catch(() => {});
     localStorage.removeItem(STORAGE_KEY_TOKEN);
+    localStorage.removeItem(STORAGE_KEY_ROLE);
     setToken(null);
     setIsAdmin(false);
+    setRole('gerant');
+    setIdentity(null);
     showNotification('info', 'Déconnexion effectuée.');
   }, [authHeaders, showNotification]);
 
@@ -1002,6 +1079,8 @@ async function errorMessage(res: ApiResponse, fallback: string): Promise<string>
     deleteBtpProject,
     uploadImage,
     login,
+    role,
+    identity,
     logout,
     changePassword,
     resetDatabase,

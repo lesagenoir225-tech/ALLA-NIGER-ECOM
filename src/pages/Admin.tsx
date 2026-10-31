@@ -30,6 +30,12 @@ import {
   RefreshCw,
   Package,
   ReceiptText,
+  BarChart3,
+  Wallet,
+  Users,
+  ShieldCheck,
+  ShoppingBag,
+  QrCode as QrCodeIcon,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Product, ShopType, TextileBrand, SiteSettings } from '../types';
@@ -38,6 +44,12 @@ import { ProductImage } from '../components/ui/ProductImage';
 import { ExperienceAdmin } from '../components/admin/ExperienceAdmin';
 import { StockManager } from '../components/admin/StockManager';
 import { ReceiptsManager } from '../components/admin/ReceiptsManager';
+import { ReportsManager } from '../components/admin/ReportsManager';
+import { ExpensesManager } from '../components/admin/ExpensesManager';
+import { TeamManager } from '../components/admin/TeamManager';
+import { BackupCard } from '../components/admin/BackupCard';
+import { exportAll } from '../services/stock';
+import { ADMIN_ROLE_LABELS, MANAGER_ONLY_TABS } from '../types/reports';
 import { useSeo } from '../utils/seo';
 import {
   checkSupabaseHealth,
@@ -59,7 +71,10 @@ type AdminTab =
   | 'media'
   | 'experience'
   | 'stock'
-  | 'receipts';
+  | 'receipts'
+  | 'reports'
+  | 'expenses'
+  | 'team';
 
 export function Admin() {
   const {
@@ -72,6 +87,8 @@ export function Admin() {
     isSaving,
     login,
     logout,
+    role,
+    identity,
     saveProduct,
     deleteProduct,
     reorderProducts,
@@ -94,6 +111,15 @@ export function Admin() {
   });
 
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
+
+  // Un vendeur ne doit jamais afficher un onglet réservé au gérant, même si
+  // l'adresse ou une session précédente l'y avait laissé.
+  React.useEffect(() => {
+    if (role !== 'gerant' && (MANAGER_ONLY_TABS as readonly string[]).includes(activeTab)) {
+      setActiveTab('dashboard');
+    }
+  }, [role, activeTab]);
+  const [loginUsername, setLoginUsername] = useState('gerant');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginErrorKind, setLoginErrorKind] = useState<'password' | 'locked' | 'network' | ''>('');
@@ -123,6 +149,31 @@ export function Admin() {
     setSettingsForm(settings);
   }, [settings]);
 
+  // Sauvegarde complète : JSON téléchargé depuis la base (fonctionne aussi
+  // sur un hébergement statique, contrairement à l'ancien lien /api/backup).
+  const [isExporting, setIsExporting] = useState(false);
+  const downloadBackup = async () => {
+    setIsExporting(true);
+    try {
+      const data = await exportAll();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `alffa-niger-sauvegarde-${stamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showNotification('success', 'Sauvegarde téléchargée. Conservez-la hors du téléphone.');
+    } catch (err: any) {
+      showNotification('error', err?.message || 'Export impossible.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Statistics
   const stats = useMemo(() => {
     const elec = products.filter((p) => p.shop === 'electronique');
@@ -151,7 +202,7 @@ export function Admin() {
     setIsSubmittingLogin(true);
     setLoginError('');
     setLoginErrorKind('');
-    const result = await login(loginPassword);
+    const result = await login(loginPassword, loginUsername);
     setIsSubmittingLogin(false);
     if (result.ok) {
       setLoginPassword('');
@@ -187,8 +238,40 @@ export function Admin() {
 
           <form onSubmit={handleLogin} className="mt-6 space-y-4">
             <div>
+              <label
+                htmlFor="login-username"
+                className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1"
+              >
+                Identifiant
+              </label>
+              <input
+                id="login-username"
+                type="text"
+                required
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="next"
+                value={loginUsername}
+                onChange={(e) => {
+                  setLoginUsername(e.target.value);
+                  if (loginError) {
+                    setLoginError('');
+                    setLoginErrorKind('');
+                  }
+                }}
+                placeholder="gerant"
+                className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)]"
+              />
+              <span className="mt-1 block text-[11px] text-[var(--muted)]">
+                « gerant » pour la gérance, ou l’identifiant du vendeur créé dans l’onglet Équipe.
+              </span>
+            </div>
+
+            <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
-                Mot de passe administrateur
+                Mot de passe
               </label>
               <div className="relative">
                 <input
@@ -305,7 +388,23 @@ export function Admin() {
               </h1>
               <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1 mt-0.5">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                Session active · Modifications enregistrées en direct
+                Session active
+                <span className="mx-1 text-[var(--muted)]">·</span>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                    role === 'gerant'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-sky-100 text-sky-800'
+                  }`}
+                >
+                  {role === 'gerant' ? (
+                    <ShieldCheck className="h-3 w-3" />
+                  ) : (
+                    <ShoppingBag className="h-3 w-3" />
+                  )}
+                  {ADMIN_ROLE_LABELS[role]}
+                  {identity?.username ? ` · ${identity.username}` : ''}
+                </span>
               </span>
             </div>
           </div>
@@ -320,13 +419,26 @@ export function Admin() {
               <span>Changer mot de passe</span>
             </button>
 
+            {role === 'gerant' && (
+              <button
+                type="button"
+                onClick={() => void downloadBackup()}
+                disabled={isExporting}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-[var(--line)] px-3 text-xs font-semibold text-[var(--night)] hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>{isExporting ? 'Sauvegarde…' : 'Télécharger sauvegarde'}</span>
+              </button>
+            )}
+
             <a
-              href="/api/backup"
-              download
+              href="#/verifier"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-[var(--line)] px-3 text-xs font-semibold text-[var(--night)] hover:bg-slate-50"
             >
-              <Download className="h-3.5 w-3.5" />
-              <span>Télécharger sauvegarde</span>
+              <QrCodeIcon className="h-3.5 w-3.5" />
+              <span>Vérifier un reçu</span>
             </a>
 
             <button
@@ -349,12 +461,21 @@ export function Admin() {
               { id: 'textile', label: 'Produits Textile', icon: Sparkles },
               { id: 'stock', label: 'Stock', icon: Package },
               { id: 'receipts', label: 'Reçus', icon: ReceiptText },
+              { id: 'expenses', label: 'Dépenses', icon: Wallet },
+              { id: 'reports', label: 'Statistiques', icon: BarChart3 },
               { id: 'featured', label: 'Produits à la une', icon: Star },
               { id: 'brands', label: 'Marques textiles', icon: Tag },
               { id: 'experience', label: 'Expérience entrepreneuriale', icon: Briefcase },
+              { id: 'team', label: 'Équipe', icon: Users },
               { id: 'settings', label: 'Coordonnées & Paramètres', icon: Settings },
               { id: 'media', label: 'Images & Médias', icon: ImageIcon },
-            ].map((tab) => {
+            ]
+              .filter(
+                (tab) =>
+                  role === 'gerant' ||
+                  !(MANAGER_ONLY_TABS as readonly string[]).includes(tab.id)
+              )
+              .map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
@@ -368,11 +489,11 @@ export function Admin() {
                       : 'text-[var(--muted)] hover:bg-black/5 hover:text-[var(--night)]'
                   }`}
                 >
-                  <Icon className="h-4 w-4" />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
+                    <Icon className="h-4 w-4" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
           </nav>
         </div>
       </div>
@@ -382,6 +503,9 @@ export function Admin() {
         {/* TAB 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8">
+            {/* Sauvegarde : visible du gérant uniquement */}
+            {role === 'gerant' && <BackupCard />}
+
             {/* KPI Cards */}
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
               <div className="rounded-2xl bg-white p-5 border border-[var(--line)] shadow-sm">
@@ -604,6 +728,15 @@ export function Admin() {
 
         {/* TAB REÇUS : encaissement, impression, partage */}
         {activeTab === 'receipts' && <ReceiptsManager />}
+
+        {/* TAB DÉPENSES : achats, transport, loyer, salaires */}
+        {activeTab === 'expenses' && role === 'gerant' && <ExpensesManager />}
+
+        {/* TAB STATISTIQUES : ventes, panier moyen, bénéfice réel */}
+        {activeTab === 'reports' && <ReportsManager canSeeFinance={role === 'gerant'} />}
+
+        {/* TAB ÉQUIPE : comptes gérant / vendeur */}
+        {activeTab === 'team' && role === 'gerant' && <TeamManager />}
 
         {activeTab === 'settings' && (
           <SettingsManager

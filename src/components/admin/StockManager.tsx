@@ -25,9 +25,10 @@ import {
   ClipboardList,
   TrendingUp,
   Undo2,
+  MessageCircle,
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
-import { formatPrice } from '../../utils/format';
+import { formatPrice, normalizeWhatsApp } from '../../utils/format';
 import { fetchStockOverview, moveStock } from '../../services/stock';
 import {
   STOCK_MOVE_LABELS,
@@ -79,7 +80,7 @@ const emptyForm = (item?: StockItem): MovementForm => ({
 });
 
 export function StockManager() {
-  const { showNotification } = useStore();
+  const { showNotification, settings } = useStore();
   const [overview, setOverview] = useState<StockOverview | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -284,6 +285,61 @@ export function StockManager() {
           </span>
         </div>
       </div>
+
+      {/* Alerte WhatsApp : prévenir le gérant avant la rupture */}
+      {(() => {
+        const alerts = items.filter((item) => item.quantity <= item.alertThreshold);
+        if (alerts.length === 0) return null;
+        const number = normalizeWhatsApp(settings.whatsappElectronique || settings.phone);
+        const lines = alerts
+          .slice(0, 20)
+          .map(
+            (item) =>
+              `• ${item.name} (${item.shop === 'electronique' ? 'Électronique' : 'Textile'}) : ${
+                item.quantity === 0 ? 'RUPTURE' : `${item.quantity} restant`
+              } — seuil ${item.alertThreshold}`
+          );
+        const message = [
+          `Alerte stock — ${settings.name || 'ALFFA NIGER'}`,
+          `${alerts.length} article(s) à réapprovisionner :`,
+          ...lines,
+          alerts.length > 20 ? `… et ${alerts.length - 20} autre(s).` : '',
+          `Date : ${new Date().toLocaleString('fr-FR')}`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        const link = number
+          ? `https://wa.me/${number}?text=${encodeURIComponent(message)}`
+          : '';
+        return (
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+            <div className="min-w-[220px] flex-1 text-sm text-amber-900">
+              <p className="font-bold">
+                {alerts.length} article{alerts.length > 1 ? 's' : ''} sous le seuil d’alerte
+              </p>
+              <p className="text-xs">
+                Envoyez la liste sur WhatsApp pour commander le réapprovisionnement, ou activez
+                « Seulement les alertes » pour la voir en entier.
+              </p>
+            </div>
+            {link ? (
+              <a
+                href={link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"
+              >
+                <MessageCircle className="h-4 w-4" /> Alerter sur WhatsApp
+              </a>
+            ) : (
+              <span className="text-xs font-semibold text-amber-800">
+                Renseignez le numéro WhatsApp dans « Coordonnées & Paramètres » pour envoyer l’alerte.
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Filtres */}
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] bg-white p-4">

@@ -9,6 +9,7 @@
 import React from 'react';
 import type { SiteSettings } from '../../types';
 import { PAYMENT_LABELS, amountInWords, type Receipt } from '../../types/stock';
+import { QrCode } from '../ui/QrCode';
 
 const money = (value: number) =>
   `${new Intl.NumberFormat('fr-FR').format(Math.round(value || 0)).replace(/\u202f|\u00a0/g, ' ')} FCFA`;
@@ -28,6 +29,23 @@ interface Props {
   settings: SiteSettings;
   /** Identifiant du bloc imprimé (utilisé par la feuille de style d'impression). */
   id?: string;
+}
+
+/**
+ * Adresse publique de vérification d'un reçu.
+ *
+ * L'adresse du site est celle des paramètres ; à défaut, celle du navigateur.
+ * Le routage du site étant basé sur le fragment (`#/...`), le lien fonctionne
+ * aussi sur un hébergement statique sans règle de réécriture.
+ */
+export function receiptVerifyUrl(settings: SiteSettings, code: string): string {
+  const base =
+    (settings.siteUrl || (typeof window !== 'undefined' ? window.location.origin : '') || '').replace(
+      /\/$/,
+      ''
+    );
+  const path = `#/verifier/${encodeURIComponent(code)}`;
+  return base ? `${base}/${path}` : path;
 }
 
 export function ReceiptDocument({ receipt, settings, id = 'receipt-print' }: Props) {
@@ -169,6 +187,40 @@ export function ReceiptDocument({ receipt, settings, id = 'receipt-print' }: Pro
           )}
         </div>
       </div>
+
+      {/* Code de vérification : preuve d'authenticité du reçu */}
+      {receipt.verifyCode && (
+        <div
+          className="mt-4 flex items-center gap-4 rounded-lg border border-[var(--line)] bg-[var(--mist)] px-3 py-2.5"
+          data-verify-code={receipt.verifyCode}
+          data-verify-url={receiptVerifyUrl(settings, receipt.verifyCode)}
+        >
+          <QrCode
+            value={receiptVerifyUrl(settings, receipt.verifyCode)}
+            size={78}
+            title={`Vérifier le reçu ${receipt.number}`}
+            className="shrink-0 rounded bg-white p-1"
+          />
+          <div className="text-[10px] leading-snug text-[var(--muted)]">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--night)]">
+              Reçu vérifiable
+            </p>
+            <p>
+              Code :{' '}
+              <span className="font-mono text-sm font-bold tracking-widest text-[var(--night)]">
+                {receipt.verifyCode}
+              </span>
+            </p>
+            <p className="mt-0.5">
+              Scannez le QR code, ou saisissez ce code sur la page « Vérifier un reçu » du site,
+              pour confirmer que ce document a bien été émis par la maison.
+            </p>
+            <p className="mt-0.5 font-mono text-[9px] break-all text-[var(--muted)]">
+              {receiptVerifyUrl(settings, receipt.verifyCode)}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Signature et cachet */}
       <div className="mt-6 flex items-end justify-between gap-4 border-t border-[var(--line)] pt-4">

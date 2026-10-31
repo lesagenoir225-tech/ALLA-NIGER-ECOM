@@ -59,6 +59,47 @@ Deux modules pensés pour le quotidien de la boutique, disponibles en mode serve
 
 ---
 
+## 1 ter. Gestion de l'exploitation — six modules
+
+Tous fonctionnent **sans serveur Node** (hébergement LWS) : les calculs et les
+écritures passent par des fonctions PostgreSQL protégées par le jeton gérant.
+
+| Module | Onglet | Ce qu'il apporte |
+| --- | --- | --- |
+| **Statistiques de ventes** | *Statistiques* | Chiffre d'affaires du jour / 7 jours / 30 jours / année, nombre de ventes, **panier moyen**, remises accordées, reste à encaisser, ventes jour par jour, meilleures ventes, répartition par moyen de paiement, meilleurs clients. |
+| **Dépenses & bénéfice réel** | *Dépenses* + *Statistiques* | Achats, transport, loyer, salaires, communication, taxes, emballage, autre. Le bénéfice net = chiffre d'affaires − coût des marchandises vendues − dépenses. |
+| **Reçu vérifiable** | *Reçus* + page publique | Chaque reçu reçoit un **code à 8 caractères** et un **QR code** renvoyant vers `#/verifier/CODE`. La page publique affiche numéro, date, montant, statut et lignes — jamais le nom complet ni le téléphone du client. |
+| **Alertes de stock** | *Stock* | Seuil par article, compteur d'alertes, bouton **« Alerter sur WhatsApp »** qui prépare le message de réapprovisionnement avec la liste des articles sous seuil. |
+| **Multi-utilisateurs** | *Équipe* | Comptes **gérant** (tout) et **vendeur** (reçus, ventes, stock en consultation). Les onglets réservés disparaissent pour un vendeur, et la base refuse de son côté toute action non autorisée. |
+| **Sauvegarde automatique** | *Tableau de bord* | Copie complète quotidienne (conservée 90 jours, sans aucun mot de passe), téléchargeable en JSON ; planifiée par `pg_cron` à 03 h 00, et déclenchée à la première ouverture du jour si la planification n'est pas disponible. |
+
+### Règles métier
+
+- **Chiffre d'affaires** = somme des reçus non annulés. Annuler un reçu le retire des statistiques et remet la marchandise en stock.
+- **Coût des marchandises vendues** = prix d'achat × quantités vendues (issu des mouvements de stock de type `vente`). Tant que les prix d'achat ne sont pas renseignés, la marge est surestimée : l'onglet Stock le signale.
+- **Bénéfice net** = chiffre d'affaires − coût des marchandises − dépenses.
+- **Rôles** : le vendeur ne peut pas voir les finances, les dépenses, les comptes, ni annuler un reçu ; le gérant garde l'accès complet. Un gérant ne peut pas retirer ses propres droits ni supprimer son propre compte.
+- **Reçu** : immuable. Une correction = annulation (mention « ANNULÉ », stock restitué).
+- **Sauvegarde** : jamais de secret dedans (`admin_password_hash` retiré), une copie par jour, purge au-delà de 90 jours.
+
+### Où sont stockées ces données ?
+
+| Donnée | Mode serveur | Hébergement statique (LWS) |
+| --- | --- | --- |
+| Stock | `data/stock.json` | `stock_items` + `stock_movements` |
+| Reçus | `data/receipts.json` | `receipts` (+ colonne `verify_code`) |
+| Dépenses | `data/expenses.json` | `expenses` |
+| Comptes | `data/accounts.json` (scrypt) | `admin_accounts` (bcrypt) |
+| Sauvegardes | `data/backups/AAAA-MM-JJ.json` | `admin_backups` |
+
+Fonctions PostgreSQL associées : `admin_sales_stats`, `admin_finance_overview`,
+`admin_list_expenses` / `admin_save_expense` / `admin_delete_expense`,
+`public_verify_receipt`, `admin_login_v3`, `admin_role`, `admin_list_accounts` /
+`admin_save_account` / `admin_delete_account`, `admin_backup_list` /
+`admin_backup_now` / `admin_backup_get`.
+
+---
+
 ## 2. Démarrage et Utilisation
 
 ### Mode Développement
@@ -251,6 +292,8 @@ sur la base.
 - En cas de coupure d'un instant, la connexion est retentée une fois automatiquement.
 - Une panne pendant le contrôle de session ne déconnecte plus l'administrateur.
 - Base : `admin_login_v2` répond en JSON (refus, blocage, succès) ; `admin_login` conserve l'ancien contrat pour que les paquets déjà déployés continuent de fonctionner pendant la mise à jour.
+- **Cause trouvée (la vraie)** : avec l'arrivée des comptes gérant/vendeur, deux empreintes du mot de passe coexistaient en base — `admin_credentials` (historique) et `admin_accounts` (utilisée par la connexion réelle). « Changer le mot de passe » ne mettait à jour que la première : le **nouveau** mot de passe était alors refusé, tandis que l'**ancien** continuait de fonctionner. D'où l'impression que « parfois ça ne passe pas ». Corrigé : le changement écrit la même empreinte dans les deux tables, et une base héritée se resynchronise automatiquement au premier login réussi.
+- **Plus aucun blocage d'un bon mot de passe** : le mot de passe est vérifié **avant** le compteur anti-force brute. Dix erreurs ne peuvent plus empêcher une connexion légitime ; elles ne font que ralentir une attaque.
 - Contrôle d'autorisation serveur sur **toutes** les routes d'écriture (`verifyAdmin`), y compris l'upload de pièces.
 - Visibilité des documents déduite du stockage réel ; aucun fichier privé n'est exposé par une URL statique.
 
@@ -290,6 +333,11 @@ node scripts/.smoke-stock.mjs
 npx esbuild scripts/smoke-login.tsx --bundle --platform=node --format=esm --target=node20 \
   --external:jsdom --outfile=scripts/.smoke-login.mjs --define:import.meta.env='{"MODE":"test"}'
 node scripts/.smoke-login.mjs
+
+# Six modules métier : statistiques, dépenses, reçu vérifiable + QR, équipe, sauvegarde
+npx esbuild scripts/smoke-metier.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-metier.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-metier.mjs
 ```
 
 **Configuration de prévisualisation** : `vite.config.ts` autorise désormais les hôtes de prévisualisation (`server.allowedHosts: true`), sans impact sur le comportement local.
