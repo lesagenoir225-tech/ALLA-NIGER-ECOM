@@ -215,8 +215,10 @@ export function ReceiptsManager() {
     }
     try {
       const updated = await voidReceipt(receipt.id);
-      setReceipts((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-      setPreview((prev) => (prev && prev.id === updated.id ? updated : prev));
+      // L'annulation d'un reçu déjà annulé ne renvoie que l'identifiant et le
+      // statut : on fusionne pour ne jamais perdre le détail des lignes.
+      setReceipts((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+      setPreview((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
       showNotification('success', `Reçu ${receipt.number} annulé, stock restitué.`);
       await load();
     } catch (err: any) {
