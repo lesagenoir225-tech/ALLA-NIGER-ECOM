@@ -13,7 +13,12 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-import { testSupabaseConnection, SupabaseConnectionDiagnostic } from '../../services/supabase';
+import {
+  testSupabaseConnection,
+  SupabaseConnectionDiagnostic,
+  SUPABASE_URL,
+  SUPABASE_SQL_EDITOR_URL,
+} from '../../services/supabase';
 
 export function SupabaseStatusBadge() {
   const [diagnostic, setDiagnostic] = useState<SupabaseConnectionDiagnostic | null>(null);
@@ -30,7 +35,7 @@ export function SupabaseStatusBadge() {
       setDiagnostic({
         connected: false,
         statusText: 'Échec de connexion',
-        url: 'https://dhpeptfgmwvptqilfpho.supabase.co',
+        url: SUPABASE_URL,
         latencyMs: 0,
         auth: { hasSession: false, sessionStatus: 'Erreur inattendue' },
         database: {
@@ -373,7 +378,7 @@ CREATE POLICY "Écriture des paramètres" ON public.site_settings FOR ALL USING 
               </div>
 
               <a
-                href="https://supabase.com/dashboard/project/dhpeptfgmwvptqilfpho/sql"
+                href={SUPABASE_SQL_EDITOR_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-xs font-bold text-[var(--cyan-deep)] hover:underline ml-auto"

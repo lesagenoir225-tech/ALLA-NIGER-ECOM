@@ -183,3 +183,13 @@ node scripts/.smoke-admin.mjs
 ```
 
 **Configuration de prévisualisation** : `vite.config.ts` autorise désormais les hôtes de prévisualisation (`server.allowedHosts: true`), sans impact sur le comportement local.
+
+## Base de données (Supabase)
+
+Le catalogue et les références sont stockés dans PostgreSQL (projet `ALFFA NIGER`,
+référence `blcrwjsrxcumtapymofn`). Le serveur lit et écrit via l'API Supabase avec
+la clé `service_role` ; le navigateur n'a qu'un accès en lecture.
+
+- Schéma : `supabase/schema.sql` — contenu initial : `supabase/seed.sql`
+- Guide complet, variables d'environnement et modèle de sécurité : `supabase/README.md`
+- Diagnostic en ligne : `GET /api/supabase/status`
