@@ -82,9 +82,21 @@ npm start
 ## 3. Accès à l'Espace Administration
 
 1. Rendez-vous sur `/#/admin` ou cliquez sur « **Accès Gestion** » dans le pied de page.
-2. Saisissez le mot de passe administrateur :
-   - Mot de passe par défaut : `alffa2025` (ou la valeur de la variable `ADMIN_PASSWORD` dans `.env`).
-3. Vous pouvez changer ce mot de passe à tout moment directement depuis l'en-tête de l'administration via le bouton **« Changer mot de passe »**.
+2. Saisissez le mot de passe administrateur.
+
+**Aucun mot de passe n'est écrit dans le code, la documentation ou les fichiers
+livrés.** C'est volontaire : un mot de passe livré avec l'application est un mot
+de passe connu de tous.
+
+| Situation | Mot de passe accepté |
+|---|---|
+| Hébergement statique (LWS, Vercel) | celui enregistré dans la base (empreinte bcrypt), modifiable depuis l'administration |
+| Mode serveur avec `ADMIN_PASSWORD` | la valeur de la variable |
+| Mode serveur avec empreinte enregistrée | celui correspondant à l'empreinte |
+| Mode serveur sans variable ni empreinte | un mot de passe **aléatoire**, affiché une seule fois au démarrage dans la console |
+
+3. Vous pouvez changer ce mot de passe à tout moment depuis l'en-tête de l'administration via le bouton **« Changer mot de passe »** ; il est alors enregistré chiffré en base et survit aux redéploiements.
+4. En cas d'oubli : ouvrez une session déjà connectée et changez-le, ou réinitialisez l'empreinte directement en base (voir `supabase/README.md`). Le mot de passe n'est **jamais** affiché sur l'écran de connexion — ni en clair, ni en indice.
 
 ---
 

@@ -19,6 +19,16 @@ echo "→ Build de production…"
 rm -rf dist
 npm run build >/dev/null
 
+# Filet de sécurité : aucun mot de passe ne doit se retrouver dans le paquet
+# livré. L'ancien mot de passe par défaut est reconstitué ici par morceaux pour
+# ne pas l'écrire en clair dans ce dépôt public.
+MOT_DE_PASSE_INTERDIT="$(printf 'alf%s20%s' 'fa' '25')"
+if grep -rIl -i -- "$MOT_DE_PASSE_INTERDIT" dist public/.htaccess public/README_DEPLOIEMENT_LWS.txt data/database.json 2>/dev/null | grep -q .; then
+  echo "✗ ERREUR : un mot de passe par défaut figure dans les fichiers livrés :" >&2
+  grep -rIl -i -- "$MOT_DE_PASSE_INTERDIT" dist public data 2>/dev/null >&2
+  exit 1
+fi
+
 echo "→ Préparation du dossier de déploiement…"
 cp -r dist/. "$STAGE/"
 cp public/.htaccess "$STAGE/.htaccess"

@@ -187,7 +187,13 @@ const loginText = document.body.textContent || '';
 // À partir d'ici, la session est considérée valide (écrans internes).
 session.valid = true;
 dom.window.localStorage.setItem('alffa_niger_admin_token', 'jeton-stock-0123456789');
-check('Connexion : aucune mention du mot de passe par défaut', !/alffa2025/i.test(loginText));
+// L'ancien mot de passe par défaut est reconstitué par morceaux : il ne doit
+// apparaître nulle part dans le code livré, y compris dans les tests.
+const ANCIEN_MOT_DE_PASSE = ['alf', 'fa', '20', '25'].join('');
+check(
+  'Connexion : aucune mention du mot de passe par défaut',
+  !new RegExp(ANCIEN_MOT_DE_PASSE, 'i').test(loginText),
+);
 check('Connexion : écran d’accès affiché', /Accès Administration/i.test(loginText));
 await act(async () => {
   rootA.unmount();

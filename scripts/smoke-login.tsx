@@ -168,6 +168,20 @@ await act(async () => {
 const initialText = document.body.textContent || '';
 check('Connexion : écran d’accès affiché', /Accès Administration/i.test(initialText));
 check('Connexion : bouton « voir le mot de passe »', Boolean(document.querySelector('button[title="Afficher le mot de passe"]')));
+
+// Le mot de passe doit être masqué par défaut, et aucun indice ne doit
+// apparaître à l'écran (ni mot de passe par défaut, ni « mot d'initialisation »).
+const champ = document.querySelector('input[placeholder="Entrez le mot de passe..."]') as HTMLInputElement;
+check('Masquage : champ en type « password » à l’arrivée', champ?.type === 'password', champ?.type);
+check(
+  'Masquage : aucun indice de mot de passe à l’écran',
+  !/(mot de passe\s+(par défaut|d[’']initialisation)|initialisation\s*:)/i.test(initialText),
+  initialText.slice(0, 200),
+);
+check(
+  'Masquage : aucun mot de passe en clair dans le HTML',
+  !/value="[^"]{4,}"/.test(document.querySelector('form')?.innerHTML || ''),
+);
 check('Clavier : pas de majuscule automatique', typePassword('').getAttribute('autocapitalize') === 'none');
 check('Clavier : correction automatique désactivée', typePassword('').getAttribute('autocorrect') === 'off');
 

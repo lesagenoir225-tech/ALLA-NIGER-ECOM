@@ -303,8 +303,24 @@ function registerLoginFailure(ip: string) {
   }
 }
 
-// Admin password verification
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'alffa2025';
+// --- Mot de passe administrateur (mode serveur) -----------------------------
+// Aucun mot de passe n'est écrit dans le code : un mot de passe livré avec
+// l'application devient un mot de passe public. Trois sources, dans l'ordre :
+//   1. la variable d'environnement ADMIN_PASSWORD ;
+//   2. l'empreinte enregistrée depuis l'administration (data/database.json) ;
+//   3. à défaut, un mot de passe aléatoire créé au démarrage et affiché UNE
+//      fois dans la console du serveur.
+function generateServerPassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(14);
+  let out = '';
+  for (const byte of bytes) out += alphabet[byte % alphabet.length];
+  return `${out.slice(0, 6)}-${out.slice(6, 10)}-${out.slice(10, 14)}`;
+}
+
+const ENV_ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '').trim();
+const GENERATED_ADMIN_PASSWORD = ENV_ADMIN_PASSWORD ? '' : generateServerPassword();
+const SERVER_ADMIN_PASSWORD = ENV_ADMIN_PASSWORD || GENERATED_ADMIN_PASSWORD;
 
 function verifyAdmin(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
@@ -365,8 +381,8 @@ async function startServer() {
     const password = String(req.body?.password ?? '').trim();
     const db = await loadDatabase();
     const expectedPassword = db.adminPasswordHash
-      ? undefined // custom hashed password
-      : DEFAULT_ADMIN_PASSWORD;
+      ? undefined // empreinte personnalisée enregistrée depuis l'administration
+      : SERVER_ADMIN_PASSWORD;
 
     let valid = false;
     if (db.adminPasswordHash) {
@@ -1118,6 +1134,24 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[ALFFA NIGER] Server running on http://0.0.0.0:${PORT}`);
+
+    if (GENERATED_ADMIN_PASSWORD) {
+      console.log(
+        [
+          '',
+          '┌────────────────────────────────────────────────────────────────┐',
+          '│  MOT DE PASSE ADMINISTRATEUR — généré pour cette exécution      │',
+          '└────────────────────────────────────────────────────────────────┘',
+          `   ${GENERATED_ADMIN_PASSWORD}`,
+          '',
+          '   Il n’est écrit ni dans le code, ni dans les fichiers livrés, et',
+          '   jamais envoyé au navigateur.',
+          '   Pour un mot de passe permanent : définissez ADMIN_PASSWORD, ou',
+          '   changez-le depuis l’administration (il sera enregistré chiffré).',
+          '',
+        ].join('\n'),
+      );
+    }
   });
 }
 

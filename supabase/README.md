@@ -160,7 +160,10 @@ SHA-256, et il est prioritaire sur la variable `ADMIN_PASSWORD`.
 |---|---|
 | Empreinte présente en base | celui correspondant à l'empreinte |
 | Aucune empreinte, `ADMIN_PASSWORD` défini | valeur de la variable |
-| Aucune empreinte, aucune variable | `alffa2025` (défaut historique) |
+| Aucune empreinte, aucune variable | mot de passe aléatoire généré au démarrage (affiché une fois dans la console) |
+
+Aucun mot de passe par défaut n'est écrit dans le code : un mot de passe livré
+avec l'application devient immédiatement un mot de passe public.
 
 Changer le mot de passe depuis l'écran d'administration met à jour l'empreinte
 en base : le changement survit donc aux redéploiements.
