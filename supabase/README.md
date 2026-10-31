@@ -19,6 +19,7 @@ Les fichiers JSON locaux ne servent plus que de secours hors-ligne.
 | `seed.sql` | Contenu initial (29 produits, 3 marques, 12 sélections, 1 fiche paramètres, 14 références). Généré, idempotent. |
 | `store.ts` | Couche de persistance côté serveur (clé `service_role`, jamais exposée au navigateur). |
 | `admin-rpc.sql` | Administration **sans serveur Node** : fonctions `admin_*` en `SECURITY DEFINER`, utilisables depuis un site statique. |
+| `functions/upload/index.ts` | Fonction Edge (Deno) d'envoi de fichiers vers Storage. |
 
 Le fichier historique `../supabase-schema.sql` est **obsolète** : il contenait des
 politiques d'écriture liées à un UUID factice (`REMPLACER_PAR_UUID_ADMIN`), ce qui
@@ -78,9 +79,42 @@ comportement de Vercel est inchangé.
 
 | Fonction | Raison |
 |---|---|
-| Téléversement de fichiers | nécessite un stockage (Supabase Storage ou disque) |
 | Réorganisation manuelle des produits | l'ordre n'est pas stocké en base |
 | Section BTP | non modélisée en base |
+
+## Stockage des fichiers (open source)
+
+Le téléversement fonctionne sur hébergement statique grâce à **Supabase Storage**
+(licence Apache 2.0, auto-hébergeable) et une **fonction Edge** (runtime Deno).
+
+| Bucket | Visibilité | Contenu |
+|---|---|---|
+| `public-images` | public en lecture | photos produits |
+| `private-documents` | privé | justificatifs (PDF, images) |
+
+Déroulé d'un envoi :
+
+```
+Navigateur ──x-admin-token──> functions/v1/upload
+                               ├─ vérifie admin_sessions (jeton valide ?)
+                               ├─ contrôle le type MIME et la taille (8 Mo)
+                               ├─ écrit dans le bucket (clé service_role)
+                               └─ renvoie l'URL publique
+```
+
+- Sans jeton valide : **401**, rien n'est écrit.
+- Les justificatifs privés ne sont jamais exposés : l'URL stockée pointe vers
+  la fonction, qui revérifie le jeton et délivre une **URL signée de 60 s**.
+- La clé `service_role` reste dans Supabase ; elle n'est jamais transmise au navigateur.
+
+Déploiement de la fonction :
+
+```bash
+supabase functions deploy upload --no-verify-jwt --project-ref blcrwjsrxcumtapymofn
+```
+
+Le drapeau `--no-verify-jwt` est volontaire : le jeton administrateur n'est pas
+un JWT Supabase, il est vérifié par la fonction elle-même dans `admin_sessions`.
 
 ## Variables d'environnement
 

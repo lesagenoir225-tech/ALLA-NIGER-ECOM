@@ -104,8 +104,13 @@ version après un rechargement forcé.
   ne dispose que de la clé publique, qui ne permet aucune écriture directe.
   Vous pouvez donc gérer le catalogue, les paramètres et les références
   entrepreneuriales directement depuis /#/admin sur LWS.
-  Non disponible dans ce mode : le téléversement de fichiers (utilisez une
-  adresse d'image), la réorganisation manuelle des produits, et la section BTP.
+- Téléversement des photos (fonctionne sur LWS) :
+  Les images sont envoyées dans Supabase Storage (bucket public-images), via
+  une fonction Edge qui contrôle le droit d'écrire avant d'enregistrer.
+  Formats acceptés : JPG, PNG, WebP, GIF, SVG — 8 Mo maximum.
+  Les justificatifs marqués « privé » vont dans un espace non public et ne
+  sont délivrés que par une URL signée de 60 secondes.
+  Non disponible : la réorganisation manuelle des produits et la section BTP.
 
 ---------------------------------------------------------------------------------
 En cas de question, vérifiez que le fichier .htaccess est bien actif sur LWS

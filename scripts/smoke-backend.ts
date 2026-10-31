@@ -9,7 +9,7 @@ import { api } from '../src/services/backend';
 
 let passed = 0;
 let failed = 0;
-const calls: { url: string; body: any }[] = [];
+const calls: { url: string; body: any; headers: any }[] = [];
 
 function check(label: string, condition: boolean, detail = '') {
   if (condition) {
@@ -36,8 +36,28 @@ const jsonResponse = (data: unknown, status = 200) =>
 // --- Simulation du réseau ---------------------------------------------------
 (globalThis as any).fetch = async (input: any, init?: any) => {
   const url = typeof input === 'string' ? input : input.url;
-  const body = init?.body ? JSON.parse(String(init.body)) : null;
-  calls.push({ url, body });
+  let body: any = null;
+  try {
+    body = init?.body ? JSON.parse(String(init.body)) : null;
+  } catch {
+    body = null;
+  }
+  const rawHeaders = init?.headers || {};
+  const headers: Record<string, string> = {};
+  for (const key of Object.keys(rawHeaders)) headers[key.toLowerCase()] = String(rawHeaders[key]);
+  calls.push({ url, body, headers });
+
+  // Service de fichiers (fonction Edge « upload »)
+  if (url.includes('/functions/v1/upload')) {
+    if (headers['x-admin-token'] !== 'jeton-abc123') {
+      return jsonResponse({ error: 'Session administrateur requise ou expirée.' }, 401);
+    }
+    return jsonResponse({
+      url: 'https://blcrwjsrxcumtapymofn.supabase.co/storage/v1/object/public/public-images/2026-10-31/photo-1.jpg',
+      mimeType: 'image/jpeg',
+      size: 2048,
+    });
+  }
 
   // Hébergement statique : tout ce qui commence par /api renvoie la page HTML.
   if (url.startsWith('/api')) return htmlResponse();
@@ -225,10 +245,36 @@ async function main() {
   check('Expérience : enregistrement réussi', saveExp.ok === true);
   check('Expérience : order converti en display_order', expCall?.body?.p?.display_order === 1);
 
-  // 9. Routes non disponibles
-  const upload = await api('/api/upload', { method: 'POST', body: new FormData() });
+  // 9. Téléversement d'image (Supabase Storage)
+  const upload = await api('/api/upload', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer jeton-abc123', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: 'data:image/jpeg;base64,QUJD', filename: 'photo.jpg' }),
+  });
   const uploadData = await upload.json();
-  check('Téléversement : refusé avec un message clair', upload.ok === false && typeof uploadData.error === 'string');
+  const uploadCall = calls.find((c) => c.url.includes('/functions/v1/upload'));
+  check('Téléversement : accepté', upload.ok === true, JSON.stringify(uploadData));
+  check('Téléversement : adresse publique renvoyée', /public-images/.test(uploadData.url || ''));
+  check('Téléversement : jeton transmis à la fonction', uploadCall?.headers?.['x-admin-token'] === 'jeton-abc123');
+  check('Téléversement : fichier transmis en base64', /^data:image\/jpeg;base64,/.test(uploadCall?.body?.data || ''));
+  check('Téléversement : nom de fichier transmis', uploadCall?.body?.filename === 'photo.jpg');
+
+  // 9 bis. Justificatif privé : même fonction, visibilité « prive »
+  const docUpload = await api('/api/experience/documents/upload', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer jeton-abc123', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: 'data:application/pdf;base64,QUJD', filename: 'bon.pdf', visibility: 'prive' }),
+  });
+  check('Justificatif privé : accepté', docUpload.ok === true);
+
+  // 9 ter. Sans jeton : refus net
+  const noToken = await api('/api/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: 'data:image/jpeg;base64,QUJD', filename: 'x.jpg' }),
+  });
+  const noTokenData = await noToken.json();
+  check('Téléversement sans jeton : refusé (401)', noToken.ok === false && noToken.status === 401, String(noToken.status));
 
   // 10. Erreur de la base remontée proprement
   const originalFetch = (globalThis as any).fetch;

@@ -12,7 +12,7 @@
  *            publique. Le mot de passe est vérifié en base, jamais dans le
  *            navigateur, et la clé service_role n'est jamais exposée.
  */
-import { supabase } from './supabase';
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase';
 
 export interface ApiResponse {
   ok: boolean;
@@ -255,6 +255,38 @@ async function readFeatured() {
   return featured;
 }
 
+/**
+ * Envoi d'un fichier vers Supabase Storage (open source) via la fonction Edge
+ * `upload`. La fonction vérifie elle-même le jeton administrateur en base :
+ * sans jeton valide, rien n'est stocké.
+ */
+async function uploadViaStorage(body: any, token: string): Promise<ApiResponse> {
+  if (!token) {
+    return failure('Session administrateur requise pour envoyer un fichier.', 401);
+  }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/upload`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-token': token,
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { error: 'Réponse invalide du service de fichiers.' };
+    }
+    return makeResponse(data, res.status);
+  } catch {
+    return failure('Service de fichiers injoignable. Vérifiez votre connexion.', 503);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Point d'entrée
 // ---------------------------------------------------------------------------
@@ -413,12 +445,9 @@ export async function api(path: string, init?: RequestInit): Promise<ApiResponse
       return ok({ success: true });
     }
 
-    // --- Non disponibles en mode base directe ---
+    // --- Téléversement : Supabase Storage via la fonction Edge « upload » ---
     if (path === '/api/upload' || path.includes('/documents/upload')) {
-      return failure(
-        'Le téléversement de fichiers nécessite l’hébergement Node. Utilisez une adresse d’image (URL) à la place.',
-        501,
-      );
+      return uploadViaStorage(body, token);
     }
 
     if (path.startsWith('/api/btp')) {
