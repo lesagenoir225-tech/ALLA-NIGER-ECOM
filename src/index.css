@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+:root {
+  --night: #080F49;
+  --night-2: #121a63;
+  --cyan: #13B8CE;
+  --cyan-deep: #007483;
+  --ink: #0d1440;
+  --mist: #f3f6fb;
+  --line: #e2e7f1;
+  --muted: #5b6386;
+  --ivory: #f7f2e8;
+  --sand: #ece3d2;
+  --umber: #6b5636;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Arimo", system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+.font-display {
+  font-family: "Khand", "Arimo", sans-serif;
+  line-height: 1.12;
+}
+
+.font-serif {
+  font-family: "Alegreya", Georgia, serif;
+  line-height: 1.16;
+}
+
+.split-left {
+  clip-path: polygon(0 0, 55% 0, 47.5% 53%, 53.5% 53%, 45% 100%, 0 100%);
+}
+
+.split-right {
+  clip-path: polygon(55% 0, 100% 0, 100% 100%, 45% 100%, 53.5% 53%, 47.5% 53%);
+}
+
+.weave {
+  background-color: var(--sand);
+  background-image: repeating-linear-gradient(45deg, rgba(8, 15, 73, 0.06) 0 2px, transparent 2px 12px),
+    repeating-linear-gradient(-45deg, rgba(107, 86, 54, 0.08) 0 2px, transparent 2px 12px),
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.55), transparent 70%);
+}
+
+.damask {
+  background-color: #0b1352;
+  background-image: radial-gradient(circle at 25% 25%, rgba(19, 184, 206, 0.16) 0 18%, transparent 19%),
+    radial-gradient(circle at 75% 75%, rgba(19, 184, 206, 0.16) 0 18%, transparent 19%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 14px),
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 14px);
+  background-size: 64px 64px, 64px 64px, auto, auto;
+}
+
+.sheen {
+  position: relative;
+  overflow: hidden;
+}
+
+.sheen:after {
+  content: "";
+  position: absolute;
+  inset: -40% -60%;
+  background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.22) 50%, transparent 60%);
+  animation: sheen 9s ease-in-out infinite;
+}
+
+@keyframes sheen {
+  0%, 60% {
+    transform: translate(-60%);
+  }
+  to {
+    transform: translate(60%);
+  }
+}
+
+.bolt-pulse {
+  animation: bolt 4.5s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes bolt {
+  0%, 88%, to {
+    opacity: 1;
+  }
+  92% {
+    opacity: 0.55;
+  }
+  95% {
+    opacity: 1;
+  }
+}
+
+.rise {
+  animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes rise {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheen:after,
+  .bolt-pulse,
+  .rise {
+    animation: none;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}

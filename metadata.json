@@ -1,0 +1,6 @@
+{
+  "name": "ALFFA NIGER - Boutique Électronique & Textile",
+  "description": "Plateforme e-commerce officielle d'ALFFA NIGER : smartphones (iPhone, Samsung) et textiles de qualité (bazins Drews, Gagny Lah, Getzner). La qualité au meilleur prix.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
