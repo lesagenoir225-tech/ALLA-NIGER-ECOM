@@ -102,15 +102,50 @@ version après un rechargement forcé.
   donc directement par la base PostgreSQL, via des fonctions sécurisées.
   Le mot de passe est vérifié EN BASE (jamais dans la page), et le navigateur
   ne dispose que de la clé publique, qui ne permet aucune écriture directe.
-  Vous pouvez donc gérer le catalogue, les paramètres et les références
-  entrepreneuriales directement depuis /#/admin sur LWS.
+  Vous pouvez donc gérer le catalogue, les paramètres, les références
+  entrepreneuriales, LE STOCK et LES REÇUS directement depuis /#/admin
+  sur LWS (10 onglets au total).
 - Téléversement des photos (fonctionne sur LWS) :
   Les images sont envoyées dans Supabase Storage (bucket public-images), via
   une fonction Edge qui contrôle le droit d'écrire avant d'enregistrer.
   Formats acceptés : JPG, PNG, WebP, GIF, SVG — 8 Mo maximum.
   Les justificatifs marqués « privé » vont dans un espace non public et ne
   sont délivrés que par une URL signée de 60 secondes.
-  Non disponible : la réorganisation manuelle des produits et la section BTP.
+  La réorganisation des produits (flèches ↑ ↓) est enregistrée en base et
+  conservée après rechargement. Seule la section BTP reste réservée à
+  l'hébergement avec serveur Node.
+
+---------------------------------------------------------------------------------
+6. GESTION DE STOCK ET REÇUS (nouveaux onglets de l'administration)
+---------------------------------------------------------------------------------
+- Onglet « Stock » : quantité, prix d'achat, prix de vente et seuil d'alerte
+  pour chaque article des deux boutiques. Quatre indicateurs, dont la VALEUR
+  TOTALE DE LA MARCHANDISE (valeur d'achat, valeur de revente et marge).
+  Mouvements : entrée, sortie, vente, retour, inventaire, ajustement.
+  Un journal conserve les mouvements, et un export CSV donne l'inventaire.
+- Onglet « Reçus » : choix des articles, remise, mode de paiement, montant
+  versé. Le reçu s'imprime (format A5) avec le logo, le NIF, le RCCM, la date
+  ET l'heure, le total en lettres et le cachet du gérant. Il peut aussi être
+  partagé (WhatsApp) ou copié en texte.
+  Un reçu enregistré ne se modifie pas : pour corriger, utilisez « Annuler »
+  (la marchandise repart automatiquement en stock).
+
+---------------------------------------------------------------------------------
+7. « LE MOT DE PASSE NE PASSE PAS » : QUE FAIRE ?
+---------------------------------------------------------------------------------
+1) Appuyez sur l'œil dans le champ du mot de passe : votre téléphone a
+   peut-être rempli automatiquement un ANCIEN mot de passe enregistré.
+2) Saisissez-le à la main. Les espaces avant et après sont ignorés
+   automatiquement (utile avec les claviers de téléphone).
+3) Le mot de passe distingue majuscules et minuscules.
+4) Le message affiché distingue désormais trois cas :
+   - « Mot de passe incorrect » : la saisie est refusée par la base ;
+   - « Trop de tentatives échouées depuis cet appareil » : attendez quelques
+     minutes, le blocage se lève seul ; un autre appareil peut se connecter ;
+   - « Base de données injoignable » : c'est le réseau, PAS le mot de passe.
+5) Après un déploiement, faites Ctrl+Maj+R (ou Cmd+Maj+R sur Mac) : le
+   fichier index.html n'est plus mis en cache, mais un ancien onglet peut
+   encore exécuter la version précédente.
 
 ---------------------------------------------------------------------------------
 En cas de question, vérifiez que le fichier .htaccess est bien actif sur LWS
