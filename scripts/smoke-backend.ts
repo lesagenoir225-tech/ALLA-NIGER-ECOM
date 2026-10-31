@@ -62,6 +62,10 @@ const jsonResponse = (data: unknown, status = 200) =>
   // Hébergement statique : tout ce qui commence par /api renvoie la page HTML.
   if (url.startsWith('/api')) return htmlResponse();
 
+  if (url.includes('/rest/v1/rpc/admin_login_v2')) {
+    // Nouveau contrat : la fonction répond toujours du JSON, sans exception.
+    return jsonResponse({ ok: true, token: 'jeton-abc123' });
+  }
   if (url.includes('/rest/v1/rpc/admin_login')) {
     return jsonResponse('jeton-abc123');
   }
@@ -136,9 +140,9 @@ async function main() {
   const loginData = await login.json();
   check('Connexion : réponse JSON (plus de page HTML)', login.ok === true);
   check('Connexion : jeton renvoyé', loginData.token === 'jeton-abc123', JSON.stringify(loginData));
-  const loginCall = calls.find((c) => c.url.includes('rpc/admin_login'));
+  const loginCall = calls.find((c) => c.url.includes('rpc/admin_login_v2'));
   check(
-    'Connexion : mot de passe transmis à la fonction admin_login',
+    'Connexion : mot de passe transmis à la fonction admin_login_v2',
     loginCall?.body?.p_password === 'Bayi199210',
     JSON.stringify(loginCall?.body),
   );
@@ -313,6 +317,28 @@ async function main() {
   });
   const badData = await badLogin.json();
   check('Mot de passe erroné : erreur remontée', badLogin.ok === false && /incorrect/i.test(badData.error || ''));
+
+  // 11. Blocage temporaire : message distinct du refus de mot de passe
+  (globalThis as any).fetch = async (input: any) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (url.startsWith('/api')) return htmlResponse();
+    if (url.includes('rpc/admin_login_v2')) {
+      return jsonResponse({
+        ok: false,
+        reason: 'locked',
+        message: 'Trop de tentatives échouées depuis cet appareil. Patientez quelques minutes.',
+      });
+    }
+    return jsonResponse([]);
+  };
+  const lockedLogin = await api('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'Bayi199210' }),
+  });
+  const lockedData = await lockedLogin.json();
+  check('Blocage : statut 429', lockedLogin.status === 429, String(lockedLogin.status));
+  check('Blocage : motif remonté', lockedData.reason === 'locked' && /tentatives/i.test(lockedData.error || ''));
   (globalThis as any).fetch = originalFetch;
 
   console.log(`\n${passed}/${passed + failed} vérifications réussies.`);

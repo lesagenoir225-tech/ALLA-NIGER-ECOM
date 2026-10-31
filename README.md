@@ -226,8 +226,19 @@ sur la base.
 
 ### Sécurité de l'administration
 
-- Jeton de session à durée **glissante** : expiration après 12 h d'inactivité (`SESSION_TTL_MS`, valeur par défaut `43200000`).
-- **Limitation des tentatives de connexion** : 10 échecs par IP sur 15 minutes (`LOGIN_MAX_ATTEMPTS`, `LOGIN_WINDOW_MS`) → HTTP 429.
+- Jeton de session à durée **glissante** : chaque usage repousse l'expiration à 12 h, aussi bien en mode serveur (fonction PostgreSQL `admin_assert`) qu'en mode base directe.
+- **Limitation des tentatives de connexion** : 10 échecs **par appareil** sur 15 minutes (`LOGIN_MAX_ATTEMPTS`, `LOGIN_WINDOW_MS`) → HTTP 429. Le compteur est propre à chaque appareil : les essais ratés d'un inconnu ou d'un autre téléphone ne bloquent jamais le gérant.
+- Les tentatives ratées sont réellement enregistrées (table `admin_login_attempts`). L'ancienne version levait une exception après l'insertion, ce qui l'annulait : le compteur ne bougeait jamais et le blocage pouvait se déclencher au hasard.
+- **Espaces parasites ignorés** : une espace ajoutée par le clavier du téléphone (ou une espace insécable collée depuis WhatsApp) n'empêche plus la connexion.
+
+### « Le mot de passe ne passe pas » : ce qui a été corrigé
+
+- L'écran de connexion affichait « Mot de passe incorrect » pour **toute** erreur, y compris une panne réseau ou un blocage temporaire. Chaque cause a désormais son message : refus du mot de passe, blocage temporaire, ou base injoignable (« le mot de passe n'est pas en cause »).
+- Un bouton **œil** montre ce qui est réellement saisi : les téléphones proposent parfois un ancien mot de passe enregistré, et l'autocomplétion le remplit sans qu'on le voie.
+- Les champs désactivent la majuscule et la correction automatiques du clavier ; le champ est vidé après un refus pour ne pas renvoyer deux fois le même contenu pré-rempli.
+- En cas de coupure d'un instant, la connexion est retentée une fois automatiquement.
+- Une panne pendant le contrôle de session ne déconnecte plus l'administrateur.
+- Base : `admin_login_v2` répond en JSON (refus, blocage, succès) ; `admin_login` conserve l'ancien contrat pour que les paquets déjà déployés continuent de fonctionner pendant la mise à jour.
 - Contrôle d'autorisation serveur sur **toutes** les routes d'écriture (`verifyAdmin`), y compris l'upload de pièces.
 - Visibilité des documents déduite du stockage réel ; aucun fichier privé n'est exposé par une URL statique.
 
@@ -262,6 +273,11 @@ node scripts/.smoke-admin-save.mjs
 npx esbuild scripts/smoke-stock.tsx --bundle --platform=node --format=esm --target=node20 \
   --external:jsdom --outfile=scripts/.smoke-stock.mjs --define:import.meta.env='{"MODE":"test"}'
 node scripts/.smoke-stock.mjs
+
+# Connexion : espaces parasites, messages réels, nouvel essai, session (jsdom)
+npx esbuild scripts/smoke-login.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-login.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-login.mjs
 ```
 
 **Configuration de prévisualisation** : `vite.config.ts` autorise désormais les hôtes de prévisualisation (`server.allowedHosts: true`), sans impact sur le comportement local.

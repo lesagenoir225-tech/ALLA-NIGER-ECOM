@@ -327,8 +327,12 @@ async function uploadViaStorage(body: any, token: string): Promise<ApiResponse> 
 // ---------------------------------------------------------------------------
 // Point d'entrée
 // ---------------------------------------------------------------------------
-export async function api(path: string, init?: RequestInit): Promise<ApiResponse> {
-  if (await hasNodeApi()) {
+export async function api(
+  path: string,
+  init?: RequestInit,
+  options?: { staticOnly?: boolean },
+): Promise<ApiResponse> {
+  if (!options?.staticOnly && (await hasNodeApi())) {
     return fetch(path, init) as unknown as ApiResponse;
   }
 
@@ -339,8 +343,38 @@ export async function api(path: string, init?: RequestInit): Promise<ApiResponse
   try {
     // --- Session administrateur ---
     if (path === '/api/admin/login' && method === 'POST') {
-      const newToken = await callRpc<string>('admin_login', { p_password: body.password });
-      return ok({ success: true, token: newToken });
+      // admin_login_v2 renvoie { ok, token } ou { ok:false, reason, message }
+      // SANS lever d'exception : c'est indispensable pour que la tentative
+      // ratée soit réellement enregistrée (une exception annule l'insertion,
+      // et l'anti-force brute ne comptait donc rien).
+      let result: any;
+      try {
+        result = await callRpc<any>('admin_login_v2', { p_password: body.password });
+      } catch (error: any) {
+        const message = String(error?.message || '');
+        if (/admin_login_v2|schema cache|does not exist|PGRST202/i.test(message)) {
+          // Base pas encore mise à jour : on retombe sur le contrat historique.
+          const legacy = await callRpc<string>('admin_login', { p_password: body.password });
+          return ok({ success: true, token: legacy });
+        }
+        throw error;
+      }
+
+      if (result && typeof result === 'object' && 'ok' in result) {
+        if (!result.ok) {
+          const locked = result.reason === 'locked';
+          return makeResponse(
+            {
+              error: result.message || 'Mot de passe incorrect.',
+              reason: result.reason,
+              remaining: result.remaining,
+            },
+            locked ? 429 : 401,
+          );
+        }
+        return ok({ success: true, token: result.token });
+      }
+      return ok({ success: true, token: result });
     }
 
     if (path === '/api/admin/check') {

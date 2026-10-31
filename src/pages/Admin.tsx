@@ -96,6 +96,10 @@ export function Admin() {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [loginErrorKind, setLoginErrorKind] = useState<'password' | 'locked' | 'network' | ''>('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showPasswordHelp, setShowPasswordHelp] = useState(false);
+  const loginInputRef = React.useRef<HTMLInputElement | null>(null);
   const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
 
   // Product modal state
@@ -141,14 +145,28 @@ export function Admin() {
     e.preventDefault();
     if (!loginPassword.trim()) {
       setLoginError('Veuillez renseigner le mot de passe.');
+      setLoginErrorKind('password');
       return;
     }
     setIsSubmittingLogin(true);
     setLoginError('');
-    const success = await login(loginPassword);
+    setLoginErrorKind('');
+    const result = await login(loginPassword);
     setIsSubmittingLogin(false);
-    if (!success) {
-      setLoginError('Mot de passe incorrect.');
+    if (result.ok) {
+      setLoginPassword('');
+      setShowLoginPassword(false);
+      return;
+    }
+    // Le message vient du serveur : mot de passe erroné, blocage temporaire ou
+    // panne réseau ne sont plus confondus.
+    setLoginError(result.message);
+    setLoginErrorKind(result.reason);
+    if (result.reason === 'password' || result.reason === 'locked') {
+      // On vide le champ : un mot de passe pré-rempli par le téléphone ne doit
+      // pas être renvoyé tel quel à la tentative suivante.
+      setLoginPassword('');
+      setTimeout(() => loginInputRef.current?.focus(), 30);
     }
   };
 
@@ -172,22 +190,80 @@ export function Admin() {
               <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
                 Mot de passe administrateur
               </label>
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="Entrez le mot de passe..."
-                className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)]"
-              />
+              <div className="relative">
+                <input
+                  ref={loginInputRef}
+                  type={showLoginPassword ? 'text' : 'password'}
+                  required
+                  autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="go"
+                  value={loginPassword}
+                  onChange={(e) => {
+                    setLoginPassword(e.target.value);
+                    if (loginError) {
+                      setLoginError('');
+                      setLoginErrorKind('');
+                    }
+                  }}
+                  placeholder="Entrez le mot de passe..."
+                  className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 pr-14 text-base outline-none focus:border-[var(--cyan)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword((v) => !v)}
+                  aria-label={showLoginPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  title={showLoginPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 min-h-9 min-w-9 rounded-lg px-2 text-[var(--muted)] hover:text-[var(--night)] hover:bg-slate-100"
+                >
+                  {showLoginPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
             </div>
 
             {loginError && (
-              <p className="text-xs font-semibold text-rose-600 bg-rose-50 p-2.5 rounded-lg border border-rose-200">
-                {loginError}
-              </p>
+              <div
+                className={`rounded-lg border p-2.5 text-xs font-semibold ${
+                  loginErrorKind === 'network'
+                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                    : 'border-rose-200 bg-rose-50 text-rose-600'
+                }`}
+              >
+                <p>{loginError}</p>
+                {loginErrorKind === 'network' && (
+                  <p className="mt-1 font-normal">
+                    Le mot de passe n’a pas été refusé : c’est la connexion à la base qui a échoué.
+                    Vérifiez le réseau, puis appuyez de nouveau sur « Se connecter ».
+                  </p>
+                )}
+              </div>
             )}
+
+            <div className="text-[11px] leading-relaxed text-[var(--muted)]">
+              <button
+                type="button"
+                onClick={() => setShowPasswordHelp((v) => !v)}
+                className="underline decoration-dotted hover:text-[var(--night)]"
+              >
+                Le mot de passe ne passe pas ?
+              </button>
+              {showPasswordHelp && (
+                <ul className="mt-2 list-disc space-y-1 pl-4">
+                  <li>
+                    Appuyez sur l’œil dans le champ pour <strong>voir ce qui est réellement saisi</strong> : le
+                    téléphone propose parfois un ancien mot de passe enregistré.
+                  </li>
+                  <li>Écrivez-le à la main, sans espace avant ni après (les espaces sont ignorés automatiquement).</li>
+                  <li>
+                    Vérifiez que le clavier n’a pas mis de majuscule automatique : le mot de passe distingue les
+                    majuscules des minuscules.
+                  </li>
+                  <li>Après 10 essais ratés, l’appareil est bloqué quelques minutes : attendez, le blocage se lève seul.</li>
+                </ul>
+              )}
+            </div>
 
             <button
               type="submit"

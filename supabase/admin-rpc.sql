@@ -34,8 +34,13 @@ CREATE TABLE IF NOT EXISTS public.admin_sessions (
 CREATE TABLE IF NOT EXISTS public.admin_login_attempts (
   id BIGSERIAL PRIMARY KEY,
   attempted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  success BOOLEAN NOT NULL
+  success BOOLEAN NOT NULL,
+  -- Appareil à l'origine de la tentative : l'anti-force brute est par appareil.
+  ip TEXT NOT NULL DEFAULT 'inconnu'
 );
+
+CREATE INDEX IF NOT EXISTS admin_login_attempts_ip_idx
+  ON public.admin_login_attempts (ip, attempted_at DESC);
 
 ALTER TABLE public.admin_credentials    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_sessions       ENABLE ROW LEVEL SECURITY;
@@ -52,9 +57,15 @@ CREATE OR REPLACE FUNCTION public.admin_assert(p_token TEXT)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
+  -- Session glissante : chaque usage repousse l'expiration à 12 h.
+  UPDATE public.admin_sessions
+     SET expires_at = now() + interval '12 hours'
+   WHERE token = p_token AND expires_at > now()
+     AND expires_at < now() + interval '11 hours';
+
   IF p_token IS NULL
      OR NOT EXISTS (
        SELECT 1 FROM public.admin_sessions
@@ -69,48 +80,90 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.admin_check(p_token TEXT)
 RETURNS BOOLEAN
-LANGUAGE sql
+LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
-  SELECT EXISTS (
+BEGIN
+  UPDATE public.admin_sessions
+     SET expires_at = now() + interval '12 hours'
+   WHERE token = p_token AND expires_at > now()
+     AND expires_at < now() + interval '11 hours';
+
+  RETURN EXISTS (
     SELECT 1 FROM public.admin_sessions
     WHERE token = p_token AND expires_at > now()
   );
+END;
 $$;
 
 -- -------------------------------------------------------------------------
 -- 3. Connexion / déconnexion / mot de passe
 -- -------------------------------------------------------------------------
+-- IP du client telle que PostgREST la transmet (Kong ajoute x-forwarded-for).
+CREATE OR REPLACE FUNCTION public.admin_request_ip()
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE(
+    NULLIF(
+      btrim(split_part(
+        COALESCE(current_setting('request.headers', true), '{}')::json ->> 'x-forwarded-for',
+        ',', 1
+      )),
+      ''
+    ),
+    NULLIF(btrim(COALESCE(current_setting('request.headers', true), '{}')::json ->> 'cf-connecting-ip'), ''),
+    'inconnu'
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_request_ip() FROM PUBLIC, anon, authenticated;
+
 CREATE OR REPLACE FUNCTION public.admin_login(p_password TEXT)
 RETURNS TEXT
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
-  v_hash TEXT;
-  v_failures INT;
-  v_token TEXT;
+  v_hash      TEXT;
+  v_failures  INT;
+  v_ip        TEXT := public.admin_request_ip();
+  v_password  TEXT := btrim(COALESCE(p_password, ''));
+  v_token     TEXT;
 BEGIN
-  -- Anti-force brute : 10 échecs sur 15 minutes bloquent la connexion.
+  -- Ménage : au-delà de deux jours, l'historique ne sert plus.
+  DELETE FROM public.admin_login_attempts WHERE attempted_at < now() - interval '2 days';
+
+  -- Anti-force brute limité à CET appareil : une faute de frappe (ou les
+  -- essais d'un inconnu) ne verrouille plus l'accès du gérant.
   SELECT count(*) INTO v_failures
   FROM public.admin_login_attempts
-  WHERE success = false AND attempted_at > now() - interval '15 minutes';
+  WHERE success = false
+    AND ip = v_ip
+    AND attempted_at > now() - interval '15 minutes';
 
   IF v_failures >= 10 THEN
-    RAISE EXCEPTION 'Trop de tentatives échouées. Réessayez dans quelques minutes.'
+    RAISE EXCEPTION 'Trop de tentatives échouées depuis cet appareil. Réessayez dans quelques minutes.'
       USING ERRCODE = '53300';
   END IF;
 
   SELECT password_hash INTO v_hash FROM public.admin_credentials WHERE id = 1;
 
-  IF v_hash IS NULL OR crypt(coalesce(p_password, ''), v_hash) <> v_hash THEN
-    INSERT INTO public.admin_login_attempts (success) VALUES (false);
+  IF v_hash IS NULL OR crypt(v_password, v_hash) <> v_hash THEN
+    INSERT INTO public.admin_login_attempts (success, ip) VALUES (false, v_ip);
+    IF v_failures + 1 >= 9 THEN
+      RAISE EXCEPTION 'Mot de passe incorrect. Encore % essai(s) avant un blocage temporaire.', GREATEST(0, 10 - (v_failures + 1))
+        USING ERRCODE = '28P01';
+    END IF;
     RAISE EXCEPTION 'Mot de passe incorrect.' USING ERRCODE = '28P01';
   END IF;
 
-  INSERT INTO public.admin_login_attempts (success) VALUES (true);
+  -- Succès : les échecs de cet appareil sont effacés.
+  DELETE FROM public.admin_login_attempts WHERE success = false AND ip = v_ip;
+  INSERT INTO public.admin_login_attempts (success, ip) VALUES (true, v_ip);
   DELETE FROM public.admin_sessions WHERE expires_at < now();
 
   v_token := encode(gen_random_bytes(32), 'hex');
@@ -120,12 +173,64 @@ BEGIN
   RETURN v_token;
 END;
 $$;
+-- Version JSON de la connexion (utilisée par l'interface à jour).
+-- Aucune exception n'est levée : une exception annulerait l'enregistrement de
+-- la tentative ratée, et l'anti-force brute ne compterait donc rien.
+CREATE OR REPLACE FUNCTION public.admin_login_v2(p_password TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  v_hash     TEXT;
+  v_failures INT;
+  v_ip       TEXT := public.admin_request_ip();
+  v_password TEXT := btrim(COALESCE(p_password, ''));
+  v_token    TEXT;
+BEGIN
+  DELETE FROM public.admin_login_attempts WHERE attempted_at < now() - interval '2 days';
+
+  SELECT count(*) INTO v_failures
+  FROM public.admin_login_attempts
+  WHERE success = false AND ip = v_ip AND attempted_at > now() - interval '15 minutes';
+
+  IF v_failures >= 10 THEN
+    RETURN jsonb_build_object('ok', false, 'reason', 'locked',
+      'message', 'Trop de tentatives échouées depuis cet appareil. Patientez quelques minutes, ou connectez-vous depuis un autre appareil.');
+  END IF;
+
+  SELECT password_hash INTO v_hash FROM public.admin_credentials WHERE id = 1;
+
+  IF v_hash IS NULL OR crypt(v_password, v_hash) <> v_hash THEN
+    INSERT INTO public.admin_login_attempts (success, ip) VALUES (false, v_ip);
+    v_failures := v_failures + 1;
+    RETURN jsonb_build_object('ok', false, 'reason', 'password',
+      'remaining', GREATEST(0, 10 - v_failures),
+      'message', CASE WHEN v_failures >= 8
+        THEN 'Mot de passe incorrect. Encore ' || GREATEST(0, 10 - v_failures) || ' essai(s) avant un blocage temporaire de cet appareil.'
+        ELSE 'Mot de passe incorrect.' END);
+  END IF;
+
+  DELETE FROM public.admin_login_attempts WHERE success = false AND ip = v_ip;
+  INSERT INTO public.admin_login_attempts (success, ip) VALUES (true, v_ip);
+  DELETE FROM public.admin_sessions WHERE expires_at < now();
+
+  v_token := encode(gen_random_bytes(32), 'hex');
+  INSERT INTO public.admin_sessions (token, expires_at)
+  VALUES (v_token, now() + interval '12 hours');
+
+  RETURN jsonb_build_object('ok', true, 'token', v_token);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.admin_login_v2(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.admin_login_v2(TEXT) TO anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.admin_logout(p_token TEXT)
 RETURNS VOID
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
   DELETE FROM public.admin_sessions WHERE token = p_token;
 $$;
@@ -134,7 +239,7 @@ CREATE OR REPLACE FUNCTION public.admin_change_password(p_token TEXT, p_new_pass
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   PERFORM public.admin_assert(p_token);
@@ -163,7 +268,7 @@ CREATE OR REPLACE FUNCTION public.admin_save_product(p_token TEXT, p JSONB)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   PERFORM public.admin_assert(p_token);
@@ -197,7 +302,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.products_fill_display_order()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   IF NEW.display_order IS NULL THEN
@@ -231,7 +336,7 @@ CREATE OR REPLACE FUNCTION public.admin_reorder_products(
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_base INT;
@@ -278,7 +383,7 @@ CREATE OR REPLACE FUNCTION public.admin_delete_product(p_token TEXT, p_id TEXT)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   PERFORM public.admin_assert(p_token);
@@ -291,7 +396,7 @@ CREATE OR REPLACE FUNCTION public.admin_save_brand(p_token TEXT, p JSONB)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   PERFORM public.admin_assert(p_token);
@@ -310,7 +415,7 @@ CREATE OR REPLACE FUNCTION public.admin_delete_brand(p_token TEXT, p_id TEXT)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   PERFORM public.admin_assert(p_token);
@@ -323,7 +428,7 @@ CREATE OR REPLACE FUNCTION public.admin_save_settings(p_token TEXT, p JSONB)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   PERFORM public.admin_assert(p_token);
@@ -360,7 +465,7 @@ CREATE OR REPLACE FUNCTION public.admin_save_featured(p_token TEXT, p JSONB)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_item JSONB;
@@ -393,7 +498,7 @@ CREATE OR REPLACE FUNCTION public.admin_save_reference(p_token TEXT, p JSONB)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   PERFORM public.admin_assert(p_token);
@@ -422,7 +527,7 @@ CREATE OR REPLACE FUNCTION public.admin_delete_reference(p_token TEXT, p_id TEXT
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   PERFORM public.admin_assert(p_token);
@@ -441,7 +546,7 @@ CREATE OR REPLACE FUNCTION public.admin_stock_overview(p_token TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_items JSONB;
@@ -513,7 +618,7 @@ CREATE OR REPLACE FUNCTION public.admin_stock_move(p_token TEXT, p JSONB)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_product_id TEXT := p->>'productId';
@@ -596,7 +701,7 @@ CREATE OR REPLACE FUNCTION public.admin_list_receipts(p_token TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_result JSONB;
@@ -639,7 +744,7 @@ CREATE OR REPLACE FUNCTION public.admin_save_receipt(p_token TEXT, p JSONB)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_id TEXT := NULLIF(p->>'id', '');
@@ -750,7 +855,7 @@ CREATE OR REPLACE FUNCTION public.admin_void_receipt(p_token TEXT, p_id TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_receipt public.receipts;

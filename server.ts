@@ -361,7 +361,8 @@ async function startServer() {
       });
     }
 
-    const { password } = req.body;
+    // Espaces parasites ignorés : les claviers de téléphone en ajoutent parfois.
+    const password = String(req.body?.password ?? '').trim();
     const db = await loadDatabase();
     const expectedPassword = db.adminPasswordHash
       ? undefined // custom hashed password

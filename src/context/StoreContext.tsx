@@ -26,6 +26,20 @@ import {
   SupabaseHealth,
 } from '../services/supabase';
 
+/**
+ * Résultat d'une tentative de connexion.
+ *
+ * L'ancien contrat (booléen) obligeait l'interface à afficher « mot de passe
+ * incorrect » même quand l'échec venait du réseau ou d'un blocage temporaire :
+ * l'administrateur croyait s'être trompé alors que le site n'avait simplement
+ * pas joint la base.
+ */
+export type LoginFailureReason = 'password' | 'locked' | 'network';
+
+export type LoginResult =
+  | { ok: true }
+  | { ok: false; reason: LoginFailureReason; message: string; remaining?: number };
+
 interface NotificationState {
   type: 'success' | 'error' | 'info';
   message: string;
@@ -60,7 +74,7 @@ interface StoreContextType {
   saveBtpProject: (project: BtpProject) => Promise<boolean>;
   deleteBtpProject: (id: string) => Promise<boolean>;
   uploadImage: (file: File) => Promise<string>;
-  login: (password: string) => Promise<boolean>;
+  login: (password: string) => Promise<LoginResult>;
   logout: () => void;
   changePassword: (newPassword: string) => Promise<boolean>;
   resetDatabase: () => Promise<boolean>;
@@ -76,6 +90,20 @@ const StoreContext = createContext<StoreContextType | null>(null);
 
 const STORAGE_KEY_DATA = 'alffa_niger_data_v3';
 const STORAGE_KEY_TOKEN = 'alffa_niger_admin_token';
+
+/**
+ * Retire les espaces parasites et les caractères invisibles d'un mot de passe.
+ *
+ * Cause fréquente de « le mot de passe ne passe pas » : une espace ajoutée
+ * automatiquement après le mot par le clavier du téléphone, ou un caractère
+ * invisible collé depuis un message.
+ */
+export function normalizePassword(value: string): string {
+  return String(value ?? '')
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, '')
+    .replace(/[\u00a0\u2007\u202f]/g, ' ')
+    .trim();
+}
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   // Load initial fallback from localStorage or defaults
@@ -262,19 +290,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setIsAdmin(false);
         return;
       }
-      try {
-        const res = await api('/api/admin/check', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        setIsAdmin(Boolean(data.authenticated));
-        if (!data.authenticated) {
-          localStorage.removeItem(STORAGE_KEY_TOKEN);
-          setToken(null);
+      const verify = async (): Promise<boolean | null> => {
+        try {
+          const res = await api('/api/admin/check', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return null; // panne passagère : on ne conclut rien
+          const data = await res.json();
+          if (typeof data?.authenticated !== 'boolean') return null;
+          return data.authenticated;
+        } catch {
+          return null;
         }
-      } catch {
-        setIsAdmin(false);
+      };
+
+      let authenticated = await verify();
+      if (authenticated === null) {
+        // Deuxième chance : une coupure de quelques secondes ne doit pas
+        // renvoyer l'administrateur à l'écran de connexion.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        authenticated = await verify();
       }
+
+      if (authenticated === false) {
+        localStorage.removeItem(STORAGE_KEY_TOKEN);
+        setToken(null);
+        setIsAdmin(false);
+      } else if (authenticated === true) {
+        setIsAdmin(true);
+      }
+      // authenticated === null : on conserve l'état courant (session gardée).
     }
     checkAuth();
   }, [token]);
@@ -740,27 +785,99 @@ async function errorMessage(res: ApiResponse, fallback: string): Promise<string>
   );
 
   // 11. Login
+  /**
+   * Nettoie le mot de passe saisi.
+   *
+   * Les claviers de téléphone ajoutent parfois une espace finale, une espace
+   * insécable ou un caractère invisible (copier-coller depuis WhatsApp).
+   */
   const login = useCallback(
-    async (password: string): Promise<boolean> => {
-      try {
-        const res = await api('/api/admin/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password }),
-        });
-        if (!res.ok) {
-          throw new Error(await errorMessage(res, 'Mot de passe incorrect.'));
-        }
-        const data = await res.json();
-        localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
-        setToken(data.token);
-        setIsAdmin(true);
-        showNotification('success', 'Connexion administrateur réussie.');
-        return true;
-      } catch (error: any) {
-        showNotification('error', error.message || 'Identifiants invalides.');
-        return false;
+    async (rawPassword: string): Promise<LoginResult> => {
+      const password = normalizePassword(rawPassword);
+
+      if (!password) {
+        return { ok: false, reason: 'password', message: 'Veuillez saisir le mot de passe.' };
       }
+
+      const attempt = async (options?: { staticOnly?: boolean }) => {
+        const res = await api(
+          '/api/admin/login',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+          },
+          options,
+        );
+
+        if (!res.ok) {
+          const message = await errorMessage(res, 'Mot de passe incorrect.');
+          const reason: LoginFailureReason = /trop de tentatives|blocage temporaire|locked/i.test(message)
+            ? 'locked'
+            : /mot de passe incorrect|identifiants|unauthori/i.test(message)
+              ? 'password'
+              : 'network';
+          return { ok: false as const, reason, message };
+        }
+
+        let data: any;
+        try {
+          data = await res.json();
+        } catch {
+          // Le serveur Node a répondu une page HTML : on repasse par la base.
+          return attempt({ staticOnly: true });
+        }
+        if (!data?.token) {
+          return {
+            ok: false as const,
+            reason: 'network' as const,
+            message: 'Réponse inattendue du serveur. Réessayez dans un instant.',
+          };
+        }
+        return { ok: true as const, token: data.token as string };
+      };
+
+      for (let i = 0; i < 2; i += 1) {
+        try {
+          const result = await attempt();
+          if (result.ok) {
+            localStorage.setItem(STORAGE_KEY_TOKEN, result.token);
+            setToken(result.token);
+            setIsAdmin(true);
+            showNotification('success', 'Connexion administrateur réussie.');
+            return { ok: true };
+          }
+
+          // Une coupure réseau d'un instant : une seule nouvelle tentative.
+          if (!result.ok && result.reason === 'network' && i === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 900));
+            continue;
+          }
+
+          return result;
+        } catch (error: any) {
+          const message = String(error?.message || '');
+          const transient = /failed to fetch|network ?error|load failed|fetch failed|timeout|injoignable/i.test(
+            message,
+          );
+          if (transient && i === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 900));
+            continue;
+          }
+          return {
+            ok: false,
+            reason: 'network',
+            message:
+              'Connexion impossible : la base de données ne répond pas. Vérifiez votre connexion internet, puis réessayez — le mot de passe n’est pas en cause.',
+          };
+        }
+      }
+
+      return {
+        ok: false,
+        reason: 'network',
+        message: 'Connexion impossible pour le moment. Réessayez dans un instant.',
+      };
     },
     [showNotification]
   );
