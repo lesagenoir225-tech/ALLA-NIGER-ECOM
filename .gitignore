@@ -6,3 +6,12 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Données d'exécution — expérience entrepreneuriale (jamais versionnées)
+data/experience-references.json
+data/experience-references.json.tmp
+data/private-documents/
+public/images/uploads/
+package-lock.json
+scripts/.smoke.mjs
+scripts/.smoke-admin.mjs

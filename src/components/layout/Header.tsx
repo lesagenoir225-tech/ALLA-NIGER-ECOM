@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Menu, X, ArrowLeftRight, Settings2, Smartphone, Sparkles, ChevronRight, Phone, ExternalLink } from 'lucide-react';
+import { Menu, X, ArrowLeftRight, Settings2, Smartphone, Sparkles, ChevronRight, Phone, ExternalLink, Briefcase } from 'lucide-react';
 import { Logo } from '../ui/Logo';
 import { href, scrollToTop } from '../../utils/router';
 import { useStore } from '../../context/StoreContext';
@@ -33,24 +33,30 @@ export function Header({ currentShop = 'home', currentPath }: HeaderProps) {
     };
   }, [mobileMenuOpen]);
 
-  const navLinks = isTextile
+  type NavLink = { to: string; label: string; icon?: React.ComponentType<{ className?: string }> };
+
+  const universeLinks: NavLink[] = isTextile
     ? [
         { to: '/textile/catalogue', label: 'Nos Bazins' },
         { to: '/textile/marques', label: 'Grandes Marques' },
-        { to: '/contact', label: 'Contact' },
       ]
     : isElec
     ? [
         { to: '/electronique/marque/apple', label: 'iPhone / Apple' },
         { to: '/electronique/marque/samsung', label: 'Samsung' },
         { to: '/electronique/catalogue', label: 'Tous les modèles' },
-        { to: '/contact', label: 'Contact' },
       ]
     : [
         { to: '/electronique', label: 'Boutique Électronique', icon: Smartphone },
         { to: '/textile', label: 'Boutique Textile', icon: Sparkles },
-        { to: '/contact', label: 'Contact' },
       ];
+
+  // Entrée commune à tous les univers : la rubrique institutionnelle.
+  const navLinks: NavLink[] = [
+    ...universeLinks,
+    { to: '/experience-entrepreneuriale', label: 'Expérience entrepreneuriale' },
+    { to: '/contact', label: 'Contact' },
+  ];
 
   const switchShop = isTextile
     ? { to: '/electronique', label: 'Boutique Électronique', tone: 'elec' }
@@ -214,6 +220,17 @@ export function Header({ currentShop = 'home', currentPath }: HeaderProps) {
 
             {/* Secondary actions */}
             <div className="pt-3 border-t border-black/10 flex flex-col gap-2 text-sm">
+              <a
+                href={href('/experience-entrepreneuriale')}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  scrollToTop(true);
+                }}
+                className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 font-semibold text-[var(--night)] hover:bg-black/5"
+              >
+                <Briefcase className="h-4 w-4 text-[var(--cyan-deep)]" />
+                <span>Expérience entrepreneuriale</span>
+              </a>
               <a
                 href={href('/contact')}
                 onClick={() => {

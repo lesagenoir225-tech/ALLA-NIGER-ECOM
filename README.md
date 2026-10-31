@@ -63,3 +63,59 @@ Si vous souhaitez héberger le catalogue sur votre propre projet Firebase (Fires
    firebase deploy --only firestore:rules,storage
    ```
 Les règles `firestore.rules` et `storage.rules` fournies protègent vos données en lecture publique et écriture restreinte aux administrateurs.
+
+---
+
+## 5. Rubrique « Expérience entrepreneuriale »
+
+Nouvelle rubrique institutionnelle, accessible depuis l'en-tête, le pied de page et le tiroir mobile.
+
+- **URL** : `/#/experience-entrepreneuriale`
+- **Page** : `src/pages/Experience.tsx` (module isolé, n'affecte pas les boutiques)
+- **Domaines** : BTP · Matériel informatique et fournitures · Fournitures vivrières
+- **Filtres** : « Tous les domaines », BTP, Matériel informatique, Fournitures vivrières (fonctionnels)
+- **Fiches** : titre, bénéficiaire, description factuelle, procédure mentionnée (si connue), état d'exécution, photographies authentiques ou emplacement neutre, documents publics autorisés, « Voir les détails ».
+
+### Modèle de données
+
+Fichier dédié **`data/experience-references.json`**, créé automatiquement au premier démarrage à partir de `src/data/experienceSeed.ts`.
+Aucune migration ni suppression n'est effectuée sur `data/database.json`.
+
+Statuts : `brouillon` → `en_attente` → `valide`, plus l'indicateur de publication `published`.
+**Une référence n'est visible sur le site public que si `validation = "valide"` ET `published = true`** — contrôle appliqué côté serveur (HTTP 400 sinon).
+Documents : `visibility: "prive" | "public"` ; les documents privés sont stockés dans `data/private-documents/` (hors de `public/`) et servis uniquement par une route authentifiée.
+
+### API
+
+| Méthode | Route | Accès |
+|---|---|---|
+| GET | `/api/experience` | Public — références validées + publiées, documents publics uniquement |
+| GET | `/api/admin/experience` | Administrateur (`Bearer <token>`) |
+| POST | `/api/experience` | Administrateur |
+| PUT | `/api/experience/:id` | Administrateur |
+| DELETE | `/api/experience/:id` | Administrateur |
+| POST | `/api/experience/documents/upload` | Administrateur (PDF/JPG/PNG/WebP, 8 Mo max) |
+| GET | `/api/experience/documents/:fichier` | Administrateur — pièces privées |
+
+### Administration
+
+Onglet **« Expérience entrepreneuriale »** de `/#/admin` : ajout, modification, suppression (avec confirmation), domaine, description, bénéficiaire, procédure, photographies authentiques (texte alternatif obligatoire), documents privés/publics, statuts, enregistrement, prévisualisation, publication/dépublication.
+
+### Variables d'environnement
+
+Aucune variable nouvelle n'est requise. `ADMIN_PASSWORD` (facultatif) protège l'administration ; les données restent dans `data/`.
+
+### Tests de fumée (jsdom)
+
+```bash
+npm install --no-save jsdom
+npx esbuild scripts/smoke-experience.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke.mjs
+
+npx esbuild scripts/smoke-admin-experience.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-admin.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-admin.mjs
+```
+
+**Configuration de prévisualisation** : `vite.config.ts` autorise désormais les hôtes de prévisualisation (`server.allowedHosts: true`), sans impact sur le comportement local.

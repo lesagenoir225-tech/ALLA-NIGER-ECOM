@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
+  Briefcase,
   LayoutDashboard,
   Smartphone,
   Sparkles,
@@ -32,6 +33,7 @@ import { useStore } from '../context/StoreContext';
 import { Product, ShopType, TextileBrand, SiteSettings } from '../types';
 import { formatPrice, slugify, isValidWhatsApp, normalizeWhatsApp } from '../utils/format';
 import { ProductImage } from '../components/ui/ProductImage';
+import { ExperienceAdmin } from '../components/admin/ExperienceAdmin';
 import { useSeo } from '../utils/seo';
 import {
   checkSupabaseHealth,
@@ -48,7 +50,8 @@ type AdminTab =
   | 'featured'
   | 'brands'
   | 'settings'
-  | 'media';
+  | 'media'
+  | 'experience';
 
 export function Admin() {
   const {
@@ -255,6 +258,7 @@ export function Admin() {
               { id: 'textile', label: 'Produits Textile', icon: Sparkles },
               { id: 'featured', label: 'Produits à la une', icon: Star },
               { id: 'brands', label: 'Marques textiles', icon: Tag },
+              { id: 'experience', label: 'Expérience entrepreneuriale', icon: Briefcase },
               { id: 'settings', label: 'Coordonnées & Paramètres', icon: Settings },
               { id: 'media', label: 'Images & Médias', icon: ImageIcon },
             ].map((tab) => {
@@ -500,6 +504,8 @@ export function Admin() {
         )}
 
         {/* TAB 6: SETTINGS FORM */}
+        {activeTab === 'experience' && <ExperienceAdmin />}
+
         {activeTab === 'settings' && (
           <SettingsManager
             settings={settingsForm}
