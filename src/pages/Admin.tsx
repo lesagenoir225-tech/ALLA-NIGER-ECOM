@@ -40,6 +40,7 @@ import {
   testSupabaseConnection,
   SupabaseConnectionDiagnostic,
   syncAllToSupabase,
+  SUPABASE_SQL_EDITOR_URL,
   SUPABASE_URL,
 } from '../services/supabase';
 
@@ -2290,7 +2291,7 @@ CREATE POLICY "Écriture des paramètres" ON public.site_settings FOR ALL USING 
             <p className="text-xs text-[var(--muted)]">
               Copiez ce script et collez-le dans le <strong>SQL Editor</strong> de votre tableau de bord Supabase (
               <a
-                href="https://supabase.com/dashboard/project/dhpeptfgmwvptqilfpho/sql"
+                href={SUPABASE_SQL_EDITOR_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline text-[var(--cyan-deep)] font-semibold inline-flex items-center gap-0.5"

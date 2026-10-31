@@ -7,6 +7,34 @@ Ce pack de production contient tous les fichiers pré-compilés et optimisés
 pour un hébergement mutualisé ou cPanel chez LWS (LWS.fr / LWS Panel / cPanel).
 
 ---------------------------------------------------------------------------------
+0. METTRE À JOUR UN SITE DÉJÀ EN LIGNE (procédure recommandée)
+---------------------------------------------------------------------------------
+Vous avez déjà une version du site sur LWS et vous voulez la remplacer par
+celle-ci. La procédure est la même que pour une première installation, avec
+UNE PRÉCAUTION : ne supprimez pas le dossier des photos téléversées.
+
+Étape 1 : Connectez-vous à votre espace client LWS > Gérer > cPanel.
+Étape 2 : Ouvrez le "Gestionnaire de fichiers", puis le dossier public_html.
+Étape 3 : AVANT TOUT, faites une sauvegarde : sélectionnez tout, puis
+          "Compresser" et téléchargez le fichier .zip obtenu. En cas de
+          problème, vous pourrez revenir en arrière.
+Étape 4 : Supprimez les anciens fichiers du site : index.html, le dossier
+          assets/ et le dossier images/.
+          ⚠️ CONSERVEZ le dossier images/uploads/ s'il existe : il contient
+             les photos que vous avez vous-même ajoutées depuis l'admin.
+Étape 5 : Chargez la nouvelle archive alffa-niger-lws.zip dans public_html.
+Étape 6 : Clic droit sur l'archive > "Extraire" (Extract).
+Étape 7 : Vérifiez que index.html, .htaccess, assets/ et images/ sont bien à
+          la racine de public_html (et non dans un sous-dossier).
+Étape 8 : Supprimez l'archive .zip pour libérer de l'espace.
+Étape 9 : Ouvrez le site, puis videz le cache du navigateur
+          (Ctrl+Maj+R, ou Cmd+Maj+R sur Mac) pour voir la nouvelle version.
+
+Remarque : les versions étant identifiées par un nom de fichier unique dans
+assets/, il n'y a pas de risque de mélange entre l'ancienne et la nouvelle
+version après un rechargement forcé.
+
+---------------------------------------------------------------------------------
 1. DANS QUEL DOSSIER METTRE LES FICHIERS SUR LWS ?
 ---------------------------------------------------------------------------------
 - Si ALFFA NIGER est votre site principal :
@@ -65,10 +93,17 @@ pour un hébergement mutualisé ou cPanel chez LWS (LWS.fr / LWS Panel / cPanel)
 - Accès Espace Admin discret :
   Faites un DOUBLE-CLIC (ou double-tap mobile) sur la date "2018" dans la signature
   au bas de n'importe quelle page pour accéder à l'espace d'administration.
-- Base de données & Supabase :
-  L'application fonctionne immédiatement avec toutes les données intégrées.
-  Si vous souhaitez synchroniser avec Supabase, votre projet distant est déjà
-  pré-configuré et s'active en 1 clic dans l'espace admin.
+- Base de données Supabase :
+  Le catalogue et les références sont stockés dans PostgreSQL (projet
+  « ALFFA NIGER », référence blcrwjsrxcumtapymofn). Le site en ligne lit ces
+  données en direct.
+- IMPORTANT — administration en hébergement mutualisé :
+  Cette archive est un site STATIQUE. Elle affiche parfaitement le site et les
+  données, mais elle n'embarque pas le serveur Node qui gère l'authentification
+  de l'administration. Sur LWS, la page /#/admin s'ouvre mais l'enregistrement
+  des modifications ne peut pas aboutir.
+  Pour modifier le contenu, utilisez la version hébergée sur Vercel (serveur
+  Node + Supabase), ou passez par l'éditeur SQL Supabase.
 
 ---------------------------------------------------------------------------------
 En cas de question, vérifiez que le fichier .htaccess est bien actif sur LWS

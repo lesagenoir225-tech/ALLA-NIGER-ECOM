@@ -21,11 +21,6 @@ import {
   fetchProductsFromSupabase,
   fetchBrandsFromSupabase,
   fetchSettingsFromSupabase,
-  saveProductToSupabase,
-  deleteProductFromSupabase,
-  saveBrandToSupabase,
-  deleteBrandFromSupabase,
-  saveSettingsToSupabase,
   SupabaseHealth,
 } from '../services/supabase';
 
@@ -313,8 +308,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return next;
         });
 
-        // Sync with Supabase in background
-        saveProductToSupabase(product).catch(() => {});
+        // Supabase est mis à jour côté serveur par l'API ci-dessus
+        // (écriture avec la clé service_role). Le navigateur n'écrit jamais
+        // directement : RLS le lui interdit.
 
         showNotification('success', `Produit "${product.name}" enregistré avec succès.`);
         return true;
@@ -347,9 +343,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           syncLocalCache(settings, next, featured, brands);
           return next;
         });
-
-        // Sync with Supabase
-        deleteProductFromSupabase(id).catch(() => {});
 
         setFeatured((prev) => {
           const next = {
@@ -489,9 +482,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         const data = await res.json();
         setSettings(data.settings);
-        syncLocalCache(data.settings, products, featured, brands);
-        saveSettingsToSupabase(newSettings).catch(() => {});
-        showNotification('success', 'Coordonnées et paramètres enregistrés avec succès.');
+        syncLocalCache(data.settings, products, featured, brands);        showNotification('success', 'Coordonnées et paramètres enregistrés avec succès.');
         return true;
       } catch (error: any) {
         showNotification('error', error.message || 'Impossible d’enregistrer les paramètres.');

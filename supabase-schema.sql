@@ -1,4 +1,18 @@
 -- =========================================================================
+-- ⚠️  FICHIER OBSOLÈTE — NE PLUS UTILISER
+--
+-- Remplacé par `supabase/schema.sql` + `supabase/seed.sql`.
+--
+-- Raison : les politiques d'écriture de ce script étaient liées à un UUID
+-- factice ('REMPLACER_PAR_UUID_ADMIN') qui n'a jamais été remplacé. Résultat :
+-- PLUS PERSONNE ne pouvait écrire, y compris le serveur du site, qui
+-- utilisait la clé anon. Les synchronisations échouaient silencieusement.
+--
+-- Le nouveau schéma réserve l'écriture au serveur (clé service_role) et
+-- n'accorde aux rôles publics que la lecture.
+-- =========================================================================
+
+-- =========================================================================
 -- ALFFA NIGER — SCRIPT SQL CORRIGÉ ET SÉCURISÉ POUR SUPABASE
 -- URL du projet : https://dhpeptfgmwvptqilfpho.supabase.co
 -- =========================================================================

@@ -3,12 +3,20 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { createClient } from '@supabase/supabase-js';
 import { createServer as createViteServer } from 'vite';
 import { INITIAL_DATABASE } from './src/data/initialData';
 import { DatabaseSchema, Product, SiteSettings, TextileBrand, BtpProject } from './src/types';
 import { ExperienceReference, ExperienceDocument } from './src/types/experience';
 import { EXPERIENCE_SEED, EXPERIENCE_SEED_VERSION } from './src/data/experienceSeed';
+import {
+  loadDatabaseFromRemote,
+  persistDatabaseToRemote,
+  loadExperienceFromRemote,
+  persistExperienceToRemote,
+  remoteConfigSummary,
+  remoteWritesEnabled,
+  remoteReadsEnabled,
+} from './supabase/store';
 
 dotenv.config();
 
@@ -109,12 +117,22 @@ function migrateExperienceStore(store: ExperienceStore): ExperienceStore {
   return migrated;
 }
 
-function loadExperienceReferences(): ExperienceReference[] {
-  return migrateExperienceStore(readExperienceStore()).references;
+/**
+ * Références entrepreneuriales : Supabase fait foi, les fichiers JSON locaux
+ * servent de repli hors-ligne. Si la base est encore vide, elle est amorcée
+ * avec le contenu local (premier démarrage).
+ */
+async function loadExperienceReferences(): Promise<ExperienceReference[]> {
+  const local = migrateExperienceStore(readExperienceStore()).references;
+  const remote = await loadExperienceFromRemote();
+  if (remote && remote.length > 0) return remote;
+  if (remoteWritesEnabled()) await persistExperienceToRemote(local);
+  return local;
 }
 
-function saveExperienceReferences(list: ExperienceReference[]): void {
+async function saveExperienceReferences(list: ExperienceReference[]): Promise<void> {
   saveExperienceStore({ version: EXPERIENCE_SEED_VERSION, references: list });
+  await persistExperienceToRemote(list);
 }
 
 /** Un document n'est public que s'il est explicitement marqué « public ». */
@@ -135,9 +153,21 @@ function toPublicReference(ref: ExperienceReference): ExperienceReference {
 }
 
 // Database helper functions
-function loadDatabase(): DatabaseSchema {
+
+/** Écriture locale best-effort : le disque peut être en lecture seule (Vercel). */
+function writeDatabaseFile(db: DatabaseSchema): void {
+  try {
+    const tempFile = `${DB_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), 'utf-8');
+    fs.renameSync(tempFile, DB_FILE);
+  } catch (err) {
+    console.warn('[ALFFA NIGER] Écriture locale impossible (disque en lecture seule ?) :', (err as Error).message);
+  }
+}
+
+function readDatabaseFile(): DatabaseSchema {
   if (!fs.existsSync(DB_FILE)) {
-    saveDatabase(INITIAL_DATABASE);
+    writeDatabaseFile(INITIAL_DATABASE);
     return INITIAL_DATABASE;
   }
   try {
@@ -154,94 +184,79 @@ function loadDatabase(): DatabaseSchema {
     };
   } catch (err) {
     console.error('Failed to read database file, restoring defaults:', err);
-    saveDatabase(INITIAL_DATABASE);
+    writeDatabaseFile(INITIAL_DATABASE);
     return INITIAL_DATABASE;
   }
 }
 
-// Supabase Integration
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://dhpeptfgmwvptqilfpho.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_oHZOMRJJbjn4YmaC8hUzWQ_F2GmumCh';
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-function saveDatabase(db: DatabaseSchema): void {
-  const tempFile = `${DB_FILE}.tmp`;
-  fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), 'utf-8');
-  fs.renameSync(tempFile, DB_FILE);
-
-  // Background sync to Supabase if tables exist
-  syncDbToSupabase(db).catch(() => {});
+/**
+ * Catalogue : Supabase est la source de vérité ; le fichier JSON local n'est
+ * plus qu'un cache de secours (il n'est pas persisté sur Vercel).
+ */
+async function loadDatabase(): Promise<DatabaseSchema> {
+  const remote = await loadDatabaseFromRemote();
+  if (remote) {
+    writeDatabaseFile(remote);
+    return remote;
+  }
+  const local = readDatabaseFile();
+  // Base vide : amorçage à partir du contenu local.
+  if (remoteWritesEnabled()) await persistDatabaseToRemote(local);
+  return local;
 }
 
-async function syncDbToSupabase(db: DatabaseSchema) {
-  try {
-    const { error: pErr } = await supabase.from('products').upsert(
-      db.products.map((p) => ({
-        id: p.id,
-        shop: p.shop,
-        name: p.name,
-        brand: p.brand,
-        category: p.category,
-        price: p.price,
-        availability: p.availability,
-        capacity: p.capacity || null,
-        colors: p.colors || null,
-        condition: p.condition || null,
-        reference: p.reference || null,
-        description: p.description || null,
-        specs: p.specs || null,
-        model: p.model || null,
-        image: p.image || null,
-        source_image: p.sourceImage || null,
-        is_new: p.isNew || false,
-        hidden: p.hidden || false,
-        created_at: p.createdAt,
-      }))
-    );
-    if (!pErr) {
-      await supabase.from('brands').upsert(
-        db.brands.map((b) => ({
-          id: b.id,
-          name: b.name,
-          logo: b.logo || '',
-          source_logo: b.sourceLogo || '',
-          display_order: b.order,
-        }))
-      );
-      await supabase.from('site_settings').upsert({
-        id: 1,
-        name: db.settings.name,
-        slogan: db.settings.slogan,
-        whatsapp_electronique: db.settings.whatsappElectronique,
-        whatsapp_textile: db.settings.whatsappTextile,
-        phone: db.settings.phone,
-        address: db.settings.address,
-        email: db.settings.email,
-        hours: db.settings.hours,
-        facebook: db.settings.facebook,
-        instagram: db.settings.instagram,
-        tiktok: db.settings.tiktok,
-        maps_electronique: db.settings.mapsElectronique,
-        maps_textile: db.settings.mapsTextile,
-        site_url: db.settings.siteUrl,
-        legal_name: db.settings.legalName,
-        legal_info: db.settings.legalInfo,
-        privacy_text: db.settings.privacyText,
-        hero_title: db.settings.heroTitle,
-        hero_subtitle: db.settings.heroSubtitle,
-        elec_intro: db.settings.elecIntro,
-        textile_intro: db.settings.textileIntro,
-      });
-    }
-  } catch {}
+async function saveDatabase(db: DatabaseSchema): Promise<void> {
+  writeDatabaseFile(db);
+  await persistDatabaseToRemote(db);
 }
+
 
 // In-memory sessions (jeton -> horodatage de dernière activité)
 // Expiration par inactivité : 12 h par défaut, ajustable via SESSION_TTL_MS.
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS) || 12 * 60 * 60 * 1000;
 const activeSessions = new Map<string, number>();
 
+/**
+ * Secret de signature des jetons de session.
+ *
+ * Un jeton purement en mémoire ne fonctionne pas sur Vercel : chaque requête
+ * peut atterrir sur une instance différente, qui ne connaît pas la session
+ * ouverte sur une autre. On signe donc les jetons avec HMAC, ce qui les rend
+ * vérifiables par n'importe quelle instance sans stockage partagé.
+ */
+const SESSION_SECRET =
+  process.env.SESSION_SECRET ||
+  crypto
+    .createHash('sha256')
+    .update(`alffa-session::${process.env.SUPABASE_SERVICE_ROLE_KEY || 'local'}`)
+    .digest('hex');
+
+function signSessionToken(expiresAt: number): string {
+  const payload = String(expiresAt);
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+  return `${payload}.${signature}`;
+}
+
+function verifySignedToken(token: string): boolean | null {
+  if (!token.includes('.')) return null; // jeton d'ancien format, géré plus bas
+  const [payload, signature] = token.split('.');
+  const expiresAt = Number(payload);
+  if (!Number.isFinite(expiresAt)) return false;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  if (!crypto.timingSafeEqual(a, b)) return false;
+  return expiresAt > Date.now();
+}
+
 function isSessionValid(token: string): boolean {
+  // 1. Jeton signé : valable sur toutes les instances.
+  const signed = verifySignedToken(token);
+  if (signed !== null) return signed;
+
+  // 2. Repli : jeton d'ancien format conservé en mémoire (compatibilité).
   const last = activeSessions.get(token);
   if (!last) return false;
   if (Date.now() - last > SESSION_TTL_MS) {
@@ -306,9 +321,9 @@ async function startServer() {
   // --- API ROUTES ---
 
   // 1. Get full catalog and settings
-  app.get('/api/data', (_req: Request, res: Response) => {
+  app.get('/api/data', async (_req: Request, res: Response) => {
     try {
-      const db = loadDatabase();
+      const db = await loadDatabase();
       res.json({
         settings: db.settings,
         products: db.products,
@@ -328,7 +343,7 @@ async function startServer() {
   });
 
   // 2. Admin Login
-  app.post('/api/admin/login', (req: Request, res: Response) => {
+  app.post('/api/admin/login', async (req: Request, res: Response) => {
     const clientIp = (req.ip || req.socket.remoteAddress || 'inconnu').toString();
     const state = loginAttemptState(clientIp);
     if (state.blocked) {
@@ -339,7 +354,7 @@ async function startServer() {
     }
 
     const { password } = req.body;
-    const db = loadDatabase();
+    const db = await loadDatabase();
     const expectedPassword = db.adminPasswordHash
       ? undefined // custom hashed password
       : DEFAULT_ADMIN_PASSWORD;
@@ -354,8 +369,7 @@ async function startServer() {
 
     if (valid) {
       loginAttempts.delete(clientIp);
-      const token = crypto.randomBytes(32).toString('hex');
-      activeSessions.set(token, Date.now());
+      const token = signSessionToken(Date.now() + SESSION_TTL_MS);
       res.json({ success: true, token });
     } else {
       registerLoginFailure(clientIp);
@@ -390,36 +404,36 @@ async function startServer() {
   });
 
   // 5. Change Admin Password
-  app.post('/api/admin/change-password', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/admin/change-password', verifyAdmin, async (req: Request, res: Response) => {
     const { newPassword } = req.body;
     if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
       return res.status(400).json({ error: 'Le nouveau mot de passe doit comporter au moins 6 caractères.' });
     }
-    const db = loadDatabase();
+    const db = await loadDatabase();
     db.adminPasswordHash = crypto.createHash('sha256').update(newPassword).digest('hex');
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, message: 'Mot de passe administrateur mis à jour avec succès.' });
   });
 
   // 6. Update Settings
-  app.put('/api/settings', verifyAdmin, (req: Request, res: Response) => {
+  app.put('/api/settings', verifyAdmin, async (req: Request, res: Response) => {
     const newSettings: Partial<SiteSettings> = req.body;
-    const db = loadDatabase();
+    const db = await loadDatabase();
     db.settings = {
       ...db.settings,
       ...newSettings,
     };
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, settings: db.settings });
   });
 
   // 7. Add Product
-  app.post('/api/products', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/products', verifyAdmin, async (req: Request, res: Response) => {
     const product: Product = req.body;
     if (!product.id || !product.name || !product.shop) {
       return res.status(400).json({ error: 'ID, nom et boutique sont obligatoires.' });
     }
-    const db = loadDatabase();
+    const db = await loadDatabase();
     const existingIndex = db.products.findIndex(
       (p) => p.id === product.id && p.shop === product.shop
     );
@@ -430,15 +444,15 @@ async function startServer() {
       ...product,
       createdAt: product.createdAt || Date.now(),
     });
-    saveDatabase(db);
+    await saveDatabase(db);
     res.status(201).json({ success: true, product });
   });
 
   // 8. Update Product
-  app.put('/api/products/:shop/:id', verifyAdmin, (req: Request, res: Response) => {
+  app.put('/api/products/:shop/:id', verifyAdmin, async (req: Request, res: Response) => {
     const { shop, id } = req.params;
     const updated: Partial<Product> = req.body;
-    const db = loadDatabase();
+    const db = await loadDatabase();
     const index = db.products.findIndex((p) => p.id === id && p.shop === shop);
     if (index === -1) {
       return res.status(404).json({ error: 'Produit introuvable.' });
@@ -449,29 +463,29 @@ async function startServer() {
       id,
       shop: shop as any,
     };
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, product: db.products[index] });
   });
 
   // 9. Delete Product
-  app.delete('/api/products/:shop/:id', verifyAdmin, (req: Request, res: Response) => {
+  app.delete('/api/products/:shop/:id', verifyAdmin, async (req: Request, res: Response) => {
     const { shop, id } = req.params;
-    const db = loadDatabase();
+    const db = await loadDatabase();
     db.products = db.products.filter((p) => !(p.id === id && p.shop === shop));
     if (shop === 'electronique' || shop === 'textile') {
       db.featured[shop] = db.featured[shop].filter((fId) => fId !== id);
     }
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, deletedId: id });
   });
 
   // 10. Reorder Products
-  app.post('/api/products/reorder', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/products/reorder', verifyAdmin, async (req: Request, res: Response) => {
     const { shop, orderedIds } = req.body as { shop: 'electronique' | 'textile'; orderedIds: string[] };
     if (!shop || !Array.isArray(orderedIds)) {
       return res.status(400).json({ error: 'Boutique et liste ordonnée requises.' });
     }
-    const db = loadDatabase();
+    const db = await loadDatabase();
     const shopProducts = db.products.filter((p) => p.shop === shop);
     const otherProducts = db.products.filter((p) => p.shop !== shop);
 
@@ -488,17 +502,17 @@ async function startServer() {
     }
 
     db.products = [...otherProducts, ...reordered];
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, products: db.products });
   });
 
   // 11. Toggle Featured
-  app.post('/api/featured/toggle', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/featured/toggle', verifyAdmin, async (req: Request, res: Response) => {
     const { shop, id } = req.body as { shop: 'electronique' | 'textile'; id: string };
     if (!shop || !id) {
       return res.status(400).json({ error: 'Boutique et identifiant requis.' });
     }
-    const db = loadDatabase();
+    const db = await loadDatabase();
     const list = db.featured[shop] || [];
     const exists = list.includes(id);
     if (exists) {
@@ -506,27 +520,27 @@ async function startServer() {
     } else {
       db.featured[shop] = [...list, id];
     }
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, featured: db.featured[shop] });
   });
 
   // 12. Reorder Featured
-  app.post('/api/featured/reorder', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/featured/reorder', verifyAdmin, async (req: Request, res: Response) => {
     const { shop, orderedIds } = req.body as { shop: 'electronique' | 'textile'; orderedIds: string[] };
     if (!shop || !Array.isArray(orderedIds)) {
       return res.status(400).json({ error: 'Paramètres invalides.' });
     }
-    const db = loadDatabase();
+    const db = await loadDatabase();
     db.featured[shop] = orderedIds;
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, featured: db.featured[shop] });
   });
 
   // 13. Brand Management
-  app.put('/api/brands/:id', verifyAdmin, (req: Request, res: Response) => {
+  app.put('/api/brands/:id', verifyAdmin, async (req: Request, res: Response) => {
     const { id } = req.params;
     const updated: Partial<TextileBrand> = req.body;
-    const db = loadDatabase();
+    const db = await loadDatabase();
     const index = db.brands.findIndex((b) => b.id === id);
     if (index === -1) {
       return res.status(404).json({ error: 'Marque introuvable.' });
@@ -536,16 +550,16 @@ async function startServer() {
       ...updated,
       id,
     };
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, brand: db.brands[index] });
   });
 
-  app.post('/api/brands', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/brands', verifyAdmin, async (req: Request, res: Response) => {
     const brand: TextileBrand = req.body;
     if (!brand.id || !brand.name) {
       return res.status(400).json({ error: 'ID et nom requis.' });
     }
-    const db = loadDatabase();
+    const db = await loadDatabase();
     if (db.brands.some((b) => b.id === brand.id)) {
       return res.status(409).json({ error: 'Cette marque existe déjà.' });
     }
@@ -553,23 +567,23 @@ async function startServer() {
       ...brand,
       order: brand.order || db.brands.length + 1,
     });
-    saveDatabase(db);
+    await saveDatabase(db);
     res.status(201).json({ success: true, brand });
   });
 
-  app.delete('/api/brands/:id', verifyAdmin, (req: Request, res: Response) => {
+  app.delete('/api/brands/:id', verifyAdmin, async (req: Request, res: Response) => {
     const { id } = req.params;
-    const db = loadDatabase();
+    const db = await loadDatabase();
     db.brands = db.brands.filter((b) => b.id !== id);
-    saveDatabase(db);
+    await saveDatabase(db);
     res.json({ success: true, deletedId: id });
   });
 
   // --- 13b. BTP & Réalisations Endpoints ---
   // Public: Récupérer les réalisations publiées (uniquement les justificatifs publics autorisés)
-  app.get('/api/btp', (_req: Request, res: Response) => {
+  app.get('/api/btp', async (_req: Request, res: Response) => {
     try {
-      const db = loadDatabase();
+      const db = await loadDatabase();
       const list = (db.btpProjects || [])
         .filter((p) => p.publicationStatus === 'publie')
         .map((p) => ({
@@ -583,9 +597,9 @@ async function startServer() {
   });
 
   // Admin: Récupérer toutes les réalisations (brouillons, en attente, publiées, et tous documents)
-  app.get('/api/admin/btp', verifyAdmin, (_req: Request, res: Response) => {
+  app.get('/api/admin/btp', verifyAdmin, async (_req: Request, res: Response) => {
     try {
-      const db = loadDatabase();
+      const db = await loadDatabase();
       res.json({ success: true, projects: db.btpProjects || [] });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -593,13 +607,13 @@ async function startServer() {
   });
 
   // Admin: Ajouter une réalisation
-  app.post('/api/btp', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/btp', verifyAdmin, async (req: Request, res: Response) => {
     try {
       const incoming: BtpProject = req.body;
       if (!incoming.title || !incoming.description) {
         return res.status(400).json({ error: 'L’intitulé et la description de la réalisation sont obligatoires.' });
       }
-      const db = loadDatabase();
+      const db = await loadDatabase();
       if (!db.btpProjects) db.btpProjects = [];
       const id = incoming.id || `btp-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
       const project: BtpProject = {
@@ -613,7 +627,7 @@ async function startServer() {
         publicationStatus: incoming.publicationStatus || 'brouillon',
       };
       db.btpProjects.unshift(project);
-      saveDatabase(db);
+      await saveDatabase(db);
       res.status(201).json({ success: true, project });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -621,11 +635,11 @@ async function startServer() {
   });
 
   // Admin: Modifier une réalisation
-  app.put('/api/btp/:id', verifyAdmin, (req: Request, res: Response) => {
+  app.put('/api/btp/:id', verifyAdmin, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const updates: Partial<BtpProject> = req.body;
-      const db = loadDatabase();
+      const db = await loadDatabase();
       if (!db.btpProjects) db.btpProjects = [];
       const index = db.btpProjects.findIndex((p) => p.id === id);
       if (index === -1) {
@@ -637,7 +651,7 @@ async function startServer() {
         id, // Empêcher l'altération de l'identifiant
         updatedAt: Date.now(),
       };
-      saveDatabase(db);
+      await saveDatabase(db);
       res.json({ success: true, project: db.btpProjects[index] });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -645,13 +659,13 @@ async function startServer() {
   });
 
   // Admin: Supprimer une réalisation
-  app.delete('/api/btp/:id', verifyAdmin, (req: Request, res: Response) => {
+  app.delete('/api/btp/:id', verifyAdmin, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const db = loadDatabase();
+      const db = await loadDatabase();
       if (!db.btpProjects) db.btpProjects = [];
       db.btpProjects = db.btpProjects.filter((p) => p.id !== id);
-      saveDatabase(db);
+      await saveDatabase(db);
       res.json({ success: true, deletedId: id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -781,9 +795,9 @@ async function startServer() {
   }
 
   // Public : références validées et publiées, documents publics uniquement.
-  app.get('/api/experience', (_req: Request, res: Response) => {
+  app.get('/api/experience', async (_req: Request, res: Response) => {
     try {
-      const references = loadExperienceReferences()
+      const references = (await loadExperienceReferences())
         .filter(isReferencePublic)
         .sort((a, b) => (a.order || 0) - (b.order || 0))
         .map(toPublicReference);
@@ -794,9 +808,9 @@ async function startServer() {
   });
 
   // Admin : toutes les références, documents privés inclus.
-  app.get('/api/admin/experience', verifyAdmin, (_req: Request, res: Response) => {
+  app.get('/api/admin/experience', verifyAdmin, async (_req: Request, res: Response) => {
     try {
-      const references = loadExperienceReferences().sort(
+      const references = (await loadExperienceReferences()).sort(
         (a, b) => (a.order || 0) - (b.order || 0)
       );
       res.json({ success: true, references });
@@ -805,42 +819,42 @@ async function startServer() {
     }
   });
 
-  app.post('/api/experience', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/experience', verifyAdmin, async (req: Request, res: Response) => {
     try {
       const { reference, error } = buildExperienceReference(req.body);
       if (error || !reference) return res.status(400).json({ error });
-      const list = loadExperienceReferences();
+      const list = await loadExperienceReferences();
       list.unshift(reference);
-      saveExperienceReferences(list);
+      await saveExperienceReferences(list);
       res.status(201).json({ success: true, reference });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.put('/api/experience/:id', verifyAdmin, (req: Request, res: Response) => {
+  app.put('/api/experience/:id', verifyAdmin, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const list = loadExperienceReferences();
+      const list = await loadExperienceReferences();
       const index = list.findIndex((r) => r.id === id);
       if (index === -1) return res.status(404).json({ error: 'Référence introuvable.' });
       const { reference, error } = buildExperienceReference(req.body, list[index]);
       if (error || !reference) return res.status(400).json({ error });
       list[index] = { ...reference, id };
-      saveExperienceReferences(list);
+      await saveExperienceReferences(list);
       res.json({ success: true, reference: list[index] });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete('/api/experience/:id', verifyAdmin, (req: Request, res: Response) => {
+  app.delete('/api/experience/:id', verifyAdmin, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const list = loadExperienceReferences();
+      const list = await loadExperienceReferences();
       const target = list.find((r) => r.id === id);
       if (!target) return res.status(404).json({ error: 'Référence introuvable.' });
-      saveExperienceReferences(list.filter((r) => r.id !== id));
+      await saveExperienceReferences(list.filter((r) => r.id !== id));
       res.json({ success: true, deletedId: id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -942,55 +956,75 @@ async function startServer() {
   });
 
   // 15. Backup & Restore
-  app.get('/api/backup', (_req: Request, res: Response) => {
-    const db = loadDatabase();
+  app.get('/api/backup', async (_req: Request, res: Response) => {
+    const db = await loadDatabase();
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename=alffa-niger-backup-${Date.now()}.json`);
     res.send(JSON.stringify(db, null, 2));
   });
 
-  app.post('/api/restore', verifyAdmin, (req: Request, res: Response) => {
+  app.post('/api/restore', verifyAdmin, async (req: Request, res: Response) => {
     const incoming: DatabaseSchema = req.body;
     if (!incoming || !Array.isArray(incoming.products) || !incoming.settings) {
       return res.status(400).json({ error: 'Structure de sauvegarde invalide.' });
     }
-    saveDatabase(incoming);
+    await saveDatabase(incoming);
     res.json({ success: true, message: 'Données restaurées avec succès.' });
   });
 
   // 16. Reset to Initial Defaults
-  app.post('/api/admin/reset', verifyAdmin, (_req: Request, res: Response) => {
-    saveDatabase(INITIAL_DATABASE);
+  app.post('/api/admin/reset', verifyAdmin, async (_req: Request, res: Response) => {
+    await saveDatabase(INITIAL_DATABASE);
     res.json({ success: true, message: 'Base réinitialisée aux données de départ.' });
   });
 
-  // 17. Supabase Status and Sync
+  // 17. Supabase : état de la connexion et synchronisation forcée
   app.get('/api/supabase/status', async (_req: Request, res: Response) => {
+    const config = remoteConfigSummary();
     try {
-      const { data, error } = await supabase.from('products').select('id').limit(1);
-      const isConnected = !error || error.code === 'PGRST205';
-      const hasTables = !error;
+      const remote = await loadDatabaseFromRemote();
       res.json({
-        url: SUPABASE_URL,
-        connected: isConnected,
-        hasTables,
-        error: error ? error.message : null,
+        url: config.url,
+        connected: config.reads,
+        hasTables: remote !== null,
+        reads: config.reads,
+        writes: config.writes,
+        writeMode: config.writeMode,
+        counts: remote
+          ? { products: remote.products.length, brands: remote.brands.length }
+          : null,
+        error: config.reads
+          ? remote === null
+            ? 'Liaison établie mais aucune donnée lisible (tables absentes ou vides).'
+            : null
+          : 'Supabase non configuré : SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY sont absents.',
       });
     } catch (err: any) {
-      res.json({
-        url: SUPABASE_URL,
-        connected: false,
-        hasTables: false,
-        error: err.message,
-      });
+      res.json({ url: config.url, connected: false, hasTables: false, error: err.message });
     }
   });
 
   app.post('/api/supabase/sync', verifyAdmin, async (_req: Request, res: Response) => {
     try {
-      const db = loadDatabase();
-      await syncDbToSupabase(db);
-      res.json({ success: true, message: 'Synchronisation vers Supabase lancée avec succès.' });
+      if (!remoteWritesEnabled()) {
+        return res.status(503).json({
+          error:
+            "Écriture Supabase indisponible : la variable d'environnement SUPABASE_SERVICE_ROLE_KEY est absente.",
+        });
+      }
+      const db = await await loadDatabase();
+      const ok = await persistDatabaseToRemote(db);
+      const refs = await await loadExperienceReferences();
+      const refsOk = await persistExperienceToRemote(refs);
+      if (!ok || !refsOk) {
+        return res
+          .status(502)
+          .json({ error: 'La synchronisation a échoué. Consultez les journaux du serveur.' });
+      }
+      res.json({
+        success: true,
+        message: `Synchronisation terminée : ${db.products.length} produits, ${db.brands.length} marques, ${refs.length} références.`,
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -998,7 +1032,11 @@ async function startServer() {
 
   // 18. Download LWS ZIP Package
   app.get(['/api/download/lws-zip', '/alffa-niger-lws.zip'], (_req: Request, res: Response) => {
-    const zipPath = path.resolve('public/alffa-niger-lws.zip');
+    // L'archive de déploiement vit hors de `public/` pour ne pas être recopiée
+    // dans `dist/` à chaque build (16 Mo inutiles, croissance exponentielle).
+    const releasePath = path.resolve('release/alffa-niger-lws.zip');
+    const legacyPath = path.resolve('public/alffa-niger-lws.zip');
+    const zipPath = fs.existsSync(releasePath) ? releasePath : legacyPath;
     if (fs.existsSync(zipPath)) {
       res.download(zipPath, 'alffa-niger-lws.zip');
     } else {

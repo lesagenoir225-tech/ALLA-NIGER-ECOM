@@ -1,10 +1,26 @@
 import { createClient } from '@supabase/supabase-js';
 import { DatabaseSchema, Product, SiteSettings, TextileBrand } from '../types';
 
-export const SUPABASE_URL =
-  import.meta.env.VITE_SUPABASE_URL || 'https://dhpeptfgmwvptqilfpho.supabase.co';
-export const SUPABASE_ANON_KEY =
-  import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_oHZOMRJJbjn4YmaC8hUzWQ_F2GmumCh';
+/**
+ * Projet Supabase ALFFA NIGER (référence blcrwjsrxcumtapymofn).
+ *
+ * La clé ci-dessous est une clé *publishable*, conçue pour être publique :
+ * elle ne permet que la lecture, jamais l'écriture (voir supabase/schema.sql).
+ * Les écritures passent exclusivement par l'API du serveur.
+ */
+const FALLBACK_URL = 'https://blcrwjsrxcumtapymofn.supabase.co';
+const FALLBACK_ANON_KEY = 'sb_publishable_DZ2H41yPUw9KtVqf2cnKxA_JR_3vmUT';
+
+export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || FALLBACK_URL;
+export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || FALLBACK_ANON_KEY;
+
+/** Référence du projet, utilisée pour les liens vers le tableau de bord. */
+export const SUPABASE_PROJECT_REF =
+  (SUPABASE_URL.match(/https:\/\/([a-z0-9]+)\.supabase\.co/) || [])[1] || '';
+
+export const SUPABASE_SQL_EDITOR_URL = SUPABASE_PROJECT_REF
+  ? `https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/sql`
+  : 'https://supabase.com/dashboard';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 

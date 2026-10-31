@@ -45,6 +45,13 @@ const DOMAIN_ICONS: Record<ExperienceDomain, React.ComponentType<{ className?: s
   vivrier: Wheat,
 };
 
+/** Illustrations vectorielles sobres (aucune photographie de chantier inventée). */
+const DOMAIN_ILLUSTRATIONS: Record<ExperienceDomain, string> = {
+  btp: '/images/experience/btp.svg',
+  informatique: '/images/experience/informatique.svg',
+  vivrier: '/images/experience/vivrier.svg',
+};
+
 const DOMAIN_INTROS: Record<ExperienceDomain, string> = {
   btp:
     'Ce domaine regroupe les interventions et prestations documentées d’ALFFA NIGER dans les travaux de construction, de clôture et de réhabilitation de bâtiments et d’infrastructures institutionnelles.',
@@ -226,25 +233,35 @@ export function Experience() {
               return (
                 <article
                   key={domain.key}
-                  className="flex flex-col rounded-[20px] border border-[var(--line)] bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+                  className="flex flex-col overflow-hidden rounded-[20px] border border-[var(--line)] bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
                 >
-                  <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--night)] text-[var(--cyan)]">
-                    <Icon className="h-6 w-6" />
-                  </span>
-                  <h3 className="mt-4 font-display text-xl font-semibold leading-snug text-[var(--night)]">
-                    {domain.label}
-                  </h3>
-                  <p className="mt-2 flex-1 text-sm leading-relaxed text-[var(--muted)]">
-                    {domain.summary}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => goToDomain(domain.key)}
-                    className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[var(--night)] px-4 text-sm font-bold text-white transition hover:bg-[var(--night-2)]"
-                  >
-                    <span>Découvrir nos références</span>
-                    <ArrowRight className="h-4 w-4 text-[var(--cyan)]" />
-                  </button>
+                  <img
+                    src={DOMAIN_ILLUSTRATIONS[domain.key]}
+                    alt={`Illustration — ${domain.label}`}
+                    width={640}
+                    height={400}
+                    loading="lazy"
+                    className="aspect-[8/5] w-full object-cover"
+                  />
+                  <div className="flex flex-1 flex-col p-6">
+                    <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--night)] text-[var(--cyan)]">
+                      <Icon className="h-6 w-6" />
+                    </span>
+                    <h3 className="mt-4 font-display text-xl font-semibold leading-snug text-[var(--night)]">
+                      {domain.label}
+                    </h3>
+                    <p className="mt-2 flex-1 text-sm leading-relaxed text-[var(--muted)]">
+                      {domain.summary}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => goToDomain(domain.key)}
+                      className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[var(--night)] px-4 text-sm font-bold text-white transition hover:bg-[var(--night-2)]"
+                    >
+                      <span>Découvrir nos références</span>
+                      <ArrowRight className="h-4 w-4 text-[var(--cyan)]" />
+                    </button>
+                  </div>
                 </article>
               );
             })}
