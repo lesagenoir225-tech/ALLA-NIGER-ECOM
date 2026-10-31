@@ -7,13 +7,20 @@ import { createClient } from '@supabase/supabase-js';
 import { createServer as createViteServer } from 'vite';
 import { INITIAL_DATABASE } from './src/data/initialData';
 import { DatabaseSchema, Product, SiteSettings, TextileBrand, BtpProject } from './src/types';
+import { ExperienceReference, ExperienceDocument } from './src/types/experience';
+import { EXPERIENCE_SEED } from './src/data/experienceSeed';
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve('data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
 const UPLOADS_DIR = path.resolve('public/images/uploads');
+
+// --- Expérience entrepreneuriale : stockage dédié (aucune migration destructive) ---
+const EXPERIENCE_FILE = path.join(DATA_DIR, 'experience-references.json');
+// Pièces justificatives privées : hors de `public/`, donc jamais servies statiquement.
+const PRIVATE_DOCS_DIR = path.join(DATA_DIR, 'private-documents');
 
 // Ensure storage directories exist
 if (!fs.existsSync(DATA_DIR)) {
@@ -21,6 +28,48 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+if (!fs.existsSync(PRIVATE_DOCS_DIR)) {
+  fs.mkdirSync(PRIVATE_DOCS_DIR, { recursive: true });
+}
+
+// --- Helpers Expérience entrepreneuriale ---
+function loadExperienceReferences(): ExperienceReference[] {
+  if (!fs.existsSync(EXPERIENCE_FILE)) {
+    saveExperienceReferences(EXPERIENCE_SEED);
+    return EXPERIENCE_SEED;
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(EXPERIENCE_FILE, 'utf-8'));
+    const list = Array.isArray(parsed) ? parsed : parsed.references;
+    return Array.isArray(list) ? (list as ExperienceReference[]) : [];
+  } catch (err) {
+    console.error('Lecture des références entrepreneuriale impossible :', err);
+    return [];
+  }
+}
+
+function saveExperienceReferences(list: ExperienceReference[]): void {
+  const tempFile = `${EXPERIENCE_FILE}.tmp`;
+  fs.writeFileSync(tempFile, JSON.stringify(list, null, 2), 'utf-8');
+  fs.renameSync(tempFile, EXPERIENCE_FILE);
+}
+
+/** Un document n'est public que s'il est explicitement marqué « public ». */
+function isDocumentPublic(doc: ExperienceDocument): boolean {
+  return doc.visibility === 'public';
+}
+
+/** Seule une référence validée ET publiée sort de l'administration. */
+function isReferencePublic(ref: ExperienceReference): boolean {
+  return ref.published === true && ref.validation === 'valide';
+}
+
+function toPublicReference(ref: ExperienceReference): ExperienceReference {
+  return {
+    ...ref,
+    documents: (ref.documents || []).filter(isDocumentPublic),
+  };
 }
 
 // Database helper functions
@@ -125,8 +174,49 @@ async function syncDbToSupabase(db: DatabaseSchema) {
   } catch {}
 }
 
-// In-memory sessions
-const activeSessions = new Set<string>();
+// In-memory sessions (jeton -> horodatage de dernière activité)
+// Expiration par inactivité : 12 h par défaut, ajustable via SESSION_TTL_MS.
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS) || 12 * 60 * 60 * 1000;
+const activeSessions = new Map<string, number>();
+
+function isSessionValid(token: string): boolean {
+  const last = activeSessions.get(token);
+  if (!last) return false;
+  if (Date.now() - last > SESSION_TTL_MS) {
+    activeSessions.delete(token);
+    return false;
+  }
+  // Renouvellement glissant tant que l'administrateur est actif.
+  activeSessions.set(token, Date.now());
+  return true;
+}
+
+// Limitation des tentatives de connexion (anti-force brute, en mémoire)
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS) || 10;
+const LOGIN_WINDOW_MS = Number(process.env.LOGIN_WINDOW_MS) || 15 * 60 * 1000;
+const loginAttempts = new Map<string, { count: number; firstAt: number }>();
+
+function loginAttemptState(ip: string) {
+  const entry = loginAttempts.get(ip);
+  if (!entry) return { blocked: false, remaining: LOGIN_MAX_ATTEMPTS };
+  if (Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
+    loginAttempts.delete(ip);
+    return { blocked: false, remaining: LOGIN_MAX_ATTEMPTS };
+  }
+  return {
+    blocked: entry.count >= LOGIN_MAX_ATTEMPTS,
+    remaining: Math.max(0, LOGIN_MAX_ATTEMPTS - entry.count),
+  };
+}
+
+function registerLoginFailure(ip: string) {
+  const entry = loginAttempts.get(ip);
+  if (!entry || Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
+    loginAttempts.set(ip, { count: 1, firstAt: Date.now() });
+  } else {
+    entry.count += 1;
+  }
+}
 
 // Admin password verification
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'alffa2025';
@@ -137,7 +227,7 @@ function verifyAdmin(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ error: 'Accès non autorisé. Authentification requise.' });
   }
   const token = authHeader.slice(7).trim();
-  if (!activeSessions.has(token)) {
+  if (!isSessionValid(token)) {
     return res.status(401).json({ error: 'Session expirée ou invalide. Veuillez vous reconnecter.' });
   }
   next();
@@ -177,6 +267,15 @@ async function startServer() {
 
   // 2. Admin Login
   app.post('/api/admin/login', (req: Request, res: Response) => {
+    const clientIp = (req.ip || req.socket.remoteAddress || 'inconnu').toString();
+    const state = loginAttemptState(clientIp);
+    if (state.blocked) {
+      return res.status(429).json({
+        error:
+          'Trop de tentatives de connexion. Veuillez patienter avant de réessayer.',
+      });
+    }
+
     const { password } = req.body;
     const db = loadDatabase();
     const expectedPassword = db.adminPasswordHash
@@ -192,11 +291,17 @@ async function startServer() {
     }
 
     if (valid) {
+      loginAttempts.delete(clientIp);
       const token = crypto.randomBytes(32).toString('hex');
-      activeSessions.add(token);
+      activeSessions.set(token, Date.now());
       res.json({ success: true, token });
     } else {
-      res.status(401).json({ error: 'Mot de passe incorrect.' });
+      registerLoginFailure(clientIp);
+      const after = loginAttemptState(clientIp);
+      res.status(401).json({
+        error: 'Mot de passe incorrect.',
+        attemptsRemaining: after.remaining,
+      });
     }
   });
 
@@ -205,7 +310,7 @@ async function startServer() {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.slice(7).trim();
-      if (activeSessions.has(token)) {
+      if (isSessionValid(token)) {
         return res.json({ authenticated: true });
       }
     }
@@ -489,6 +594,254 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // --- 13c. Expérience entrepreneuriale (BTP · Matériel informatique · Vivrier) ---
+  const EXPERIENCE_DOMAIN_KEYS = ['btp', 'informatique', 'vivrier'];
+  const EXPERIENCE_VALIDATIONS = ['brouillon', 'en_attente', 'valide'];
+  const EXPERIENCE_EXECUTIONS = ['non_confirme', 'en_cours', 'acheve'];
+
+  function sanitizePhotos(input: any) {
+    if (!Array.isArray(input)) return [];
+    return input
+      .filter((p) => p && typeof p.url === 'string' && p.url.startsWith('/images/uploads/'))
+      .map((p, index) => ({
+        id: String(p.id || `photo-${Date.now()}-${index}`),
+        url: p.url,
+        alt: typeof p.alt === 'string' ? p.alt.slice(0, 300) : '',
+        caption: typeof p.caption === 'string' ? p.caption.slice(0, 300) : undefined,
+        date: typeof p.date === 'string' ? p.date.slice(0, 40) : undefined,
+      }));
+  }
+
+  const PUBLIC_UPLOAD_PREFIX = '/images/uploads/';
+  const PRIVATE_DOC_PREFIX = '/api/experience/documents/';
+
+  function sanitizeDocuments(input: any): ExperienceDocument[] {
+    if (!Array.isArray(input)) return [];
+    return input
+      .filter(
+        (d) =>
+          d &&
+          typeof d.url === 'string' &&
+          (d.url.startsWith(PUBLIC_UPLOAD_PREFIX) || d.url.startsWith(PRIVATE_DOC_PREFIX))
+      )
+      .map((d, index) => {
+        // La visibilité est déduite du stockage réel du fichier, jamais du client :
+        // un fichier du dossier privé ne peut pas devenir public par simple déclaration.
+        const isPublic = d.url.startsWith(PUBLIC_UPLOAD_PREFIX);
+        return {
+          id: String(d.id || `doc-${Date.now()}-${index}`),
+          name: String(d.name || 'Document').slice(0, 200),
+          url: d.url,
+          visibility: isPublic ? 'public' : 'prive',
+          mimeType: typeof d.mimeType === 'string' ? d.mimeType : undefined,
+          size: typeof d.size === 'number' ? d.size : undefined,
+          reference: typeof d.reference === 'string' ? d.reference.slice(0, 100) : undefined,
+          description: typeof d.description === 'string' ? d.description.slice(0, 500) : undefined,
+          addedAt: typeof d.addedAt === 'number' ? d.addedAt : Date.now(),
+        } as ExperienceDocument;
+      });
+  }
+
+  /** Valide et normalise une référence entrante. Renvoie un message d'erreur si invalide. */
+  function buildExperienceReference(
+    input: any,
+    existing?: ExperienceReference
+  ): { reference?: ExperienceReference; error?: string } {
+    if (!input || typeof input !== 'object') return { error: 'Données invalides.' };
+
+    const title = String(input.title ?? existing?.title ?? '').trim();
+    const description = String(input.description ?? existing?.description ?? '').trim();
+    const domain = String(input.domain ?? existing?.domain ?? '');
+    const validation = String(input.validation ?? existing?.validation ?? 'brouillon');
+    const execution = String(input.execution ?? existing?.execution ?? 'non_confirme');
+    const published = Boolean(input.published ?? existing?.published ?? false);
+
+    if (!title) return { error: 'L’intitulé de la référence est obligatoire.' };
+    if (!description) return { error: 'La description des prestations est obligatoire.' };
+    if (!EXPERIENCE_DOMAIN_KEYS.includes(domain)) {
+      return { error: 'Domaine d’activité invalide.' };
+    }
+    if (!EXPERIENCE_VALIDATIONS.includes(validation)) {
+      return { error: 'Statut de validation invalide.' };
+    }
+    if (!EXPERIENCE_EXECUTIONS.includes(execution)) {
+      return { error: 'État d’exécution invalide.' };
+    }
+    // Contrôle d'autorisation métier : impossible de publier sans validation.
+    if (published && validation !== 'valide') {
+      return {
+        error: 'Une référence doit être « Validée pour publication » avant d’être publiée.',
+      };
+    }
+
+    const photos = input.photos !== undefined ? sanitizePhotos(input.photos) : existing?.photos || [];
+    if (published && photos.some((photo) => !photo.alt || !photo.alt.trim())) {
+      return {
+        error: 'Chaque photographie publiée doit comporter un texte alternatif descriptif.',
+      };
+    }
+
+    const now = Date.now();
+    return {
+      reference: {
+        id: existing?.id || String(input.id || `exp-${now}-${crypto.randomBytes(3).toString('hex')}`),
+        title: title.slice(0, 300),
+        domain: domain as ExperienceReference['domain'],
+        description: description.slice(0, 5000),
+        beneficiary:
+          typeof (input.beneficiary ?? existing?.beneficiary) === 'string'
+            ? String(input.beneficiary ?? existing?.beneficiary).slice(0, 200)
+            : undefined,
+        procedure:
+          typeof (input.procedure ?? existing?.procedure) === 'string'
+            ? String(input.procedure ?? existing?.procedure).slice(0, 120)
+            : undefined,
+        location:
+          typeof (input.location ?? existing?.location) === 'string'
+            ? String(input.location ?? existing?.location).slice(0, 120)
+            : undefined,
+        execution: execution as ExperienceReference['execution'],
+        validation: validation as ExperienceReference['validation'],
+        published,
+        photos,
+        documents:
+          input.documents !== undefined
+            ? sanitizeDocuments(input.documents)
+            : existing?.documents || [],
+        order: typeof (input.order ?? existing?.order) === 'number' ? input.order : existing?.order || now,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+        publishedAt: published ? existing?.publishedAt || now : undefined,
+      },
+    };
+  }
+
+  // Public : références validées et publiées, documents publics uniquement.
+  app.get('/api/experience', (_req: Request, res: Response) => {
+    try {
+      const references = loadExperienceReferences()
+        .filter(isReferencePublic)
+        .sort((a, b) => (a.order || 0) - (b.order || 0))
+        .map(toPublicReference);
+      res.json({ success: true, references });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin : toutes les références, documents privés inclus.
+  app.get('/api/admin/experience', verifyAdmin, (_req: Request, res: Response) => {
+    try {
+      const references = loadExperienceReferences().sort(
+        (a, b) => (a.order || 0) - (b.order || 0)
+      );
+      res.json({ success: true, references });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/experience', verifyAdmin, (req: Request, res: Response) => {
+    try {
+      const { reference, error } = buildExperienceReference(req.body);
+      if (error || !reference) return res.status(400).json({ error });
+      const list = loadExperienceReferences();
+      list.unshift(reference);
+      saveExperienceReferences(list);
+      res.status(201).json({ success: true, reference });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/experience/:id', verifyAdmin, (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const list = loadExperienceReferences();
+      const index = list.findIndex((r) => r.id === id);
+      if (index === -1) return res.status(404).json({ error: 'Référence introuvable.' });
+      const { reference, error } = buildExperienceReference(req.body, list[index]);
+      if (error || !reference) return res.status(400).json({ error });
+      list[index] = { ...reference, id };
+      saveExperienceReferences(list);
+      res.json({ success: true, reference: list[index] });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/experience/:id', verifyAdmin, (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const list = loadExperienceReferences();
+      const target = list.find((r) => r.id === id);
+      if (!target) return res.status(404).json({ error: 'Référence introuvable.' });
+      saveExperienceReferences(list.filter((r) => r.id !== id));
+      res.json({ success: true, deletedId: id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Téléversement d'un justificatif (PDF/JPG/PNG/WebP) — privé par défaut.
+  app.post('/api/experience/documents/upload', verifyAdmin, (req: Request, res: Response) => {
+    try {
+      const { data, filename, visibility } = req.body as {
+        data?: string;
+        filename?: string;
+        visibility?: string;
+      };
+      if (!data || typeof data !== 'string') {
+        return res.status(400).json({ error: 'Fichier manquant.' });
+      }
+      const matches = data.match(/^data:(application\/pdf|image\/(?:png|jpeg|jpg|webp));base64,(.+)$/i);
+      if (!matches) {
+        return res.status(400).json({ error: 'Formats acceptés : PDF, JPG, PNG ou WebP.' });
+      }
+      const mimeType = matches[1].toLowerCase();
+      const buffer = Buffer.from(matches[2], 'base64');
+      if (buffer.length > 8 * 1024 * 1024) {
+        return res.status(400).json({ error: 'Document trop volumineux (maximum 8 Mo).' });
+      }
+      const ext =
+        mimeType === 'application/pdf'
+          ? 'pdf'
+          : mimeType.includes('png')
+          ? 'png'
+          : mimeType.includes('webp')
+          ? 'webp'
+          : 'jpg';
+      const safeBase = filename
+        ? path.basename(filename, path.extname(filename)).replace(/[^a-z0-9_-]/gi, '_').toLowerCase()
+        : 'document';
+      const uniqueName = `${safeBase}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+      const isPublic = visibility === 'public';
+      const targetDir = isPublic ? UPLOADS_DIR : PRIVATE_DOCS_DIR;
+      fs.writeFileSync(path.join(targetDir, uniqueName), buffer);
+
+      res.json({
+        success: true,
+        // Un document privé n'est accessible que par cette route authentifiée.
+        url: isPublic ? `/images/uploads/${uniqueName}` : `/api/experience/documents/${uniqueName}`,
+        mimeType,
+        size: buffer.length,
+        visibility: isPublic ? 'public' : 'prive',
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Consultation d'un justificatif privé : authentification obligatoire.
+  app.get('/api/experience/documents/:filename', verifyAdmin, (req: Request, res: Response) => {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(PRIVATE_DOCS_DIR, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Document introuvable.' });
+    }
+    res.sendFile(filePath);
   });
 
   // 14. File Upload (Base64 or binary data)

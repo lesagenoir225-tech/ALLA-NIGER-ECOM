@@ -12,6 +12,7 @@ import { ProductDetail } from './pages/ProductDetail';
 import { Contact } from './pages/Contact';
 import { Legal } from './pages/Legal';
 import { Admin } from './pages/Admin';
+import { Experience } from './pages/Experience';
 import { NotFound } from './pages/NotFound';
 
 function AppContent() {
@@ -56,6 +57,9 @@ function AppContent() {
   } else if (first === 'confidentialite') {
     currentShop = 'home';
     pageComponent = <Legal type="privacy" />;
+  } else if (first === 'experience-entrepreneuriale') {
+    currentShop = 'home';
+    pageComponent = <Experience />;
   } else if (first === 'admin') {
     currentShop = 'home';
     pageComponent = <Admin />;

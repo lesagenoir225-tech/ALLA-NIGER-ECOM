@@ -255,6 +255,14 @@ export function Footer() {
             </h2>
             <ul className="mt-4 space-y-2 text-sm text-white/80">
               <li>
+                <a
+                  href={href('/experience-entrepreneuriale')}
+                  className="hover:text-white hover:underline transition font-semibold text-white/95"
+                >
+                  Expérience entrepreneuriale
+                </a>
+              </li>
+              <li>
                 <a href={href('/contact')} className="hover:text-white transition">
                   Page Contact
                 </a>
