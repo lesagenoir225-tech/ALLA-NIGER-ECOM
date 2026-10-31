@@ -46,6 +46,7 @@ const ADMIN_PAYLOAD = { success: true, references: EXPERIENCE_SEED };
 const fakeResponse = (payload: any) => ({
   ok: true,
   status: 200,
+  headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/json' : null) },
   json: async () => payload,
   text: async () => JSON.stringify(payload),
 });

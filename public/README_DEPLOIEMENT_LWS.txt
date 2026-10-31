@@ -97,13 +97,15 @@ version après un rechargement forcé.
   Le catalogue et les références sont stockés dans PostgreSQL (projet
   « ALFFA NIGER », référence blcrwjsrxcumtapymofn). Le site en ligne lit ces
   données en direct.
-- IMPORTANT — administration en hébergement mutualisé :
-  Cette archive est un site STATIQUE. Elle affiche parfaitement le site et les
-  données, mais elle n'embarque pas le serveur Node qui gère l'authentification
-  de l'administration. Sur LWS, la page /#/admin s'ouvre mais l'enregistrement
-  des modifications ne peut pas aboutir.
-  Pour modifier le contenu, utilisez la version hébergée sur Vercel (serveur
-  Node + Supabase), ou passez par l'éditeur SQL Supabase.
+- Administration en hébergement mutualisé (fonctionne désormais) :
+  Cette archive est un site STATIQUE, sans serveur Node. L'administration passe
+  donc directement par la base PostgreSQL, via des fonctions sécurisées.
+  Le mot de passe est vérifié EN BASE (jamais dans la page), et le navigateur
+  ne dispose que de la clé publique, qui ne permet aucune écriture directe.
+  Vous pouvez donc gérer le catalogue, les paramètres et les références
+  entrepreneuriales directement depuis /#/admin sur LWS.
+  Non disponible dans ce mode : le téléversement de fichiers (utilisez une
+  adresse d'image), la réorganisation manuelle des produits, et la section BTP.
 
 ---------------------------------------------------------------------------------
 En cas de question, vérifiez que le fichier .htaccess est bien actif sur LWS

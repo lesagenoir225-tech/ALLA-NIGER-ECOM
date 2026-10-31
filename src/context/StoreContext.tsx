@@ -16,6 +16,7 @@ import {
   INITIAL_FEATURED,
   INITIAL_BTP_PROJECTS,
 } from '../data/initialData';
+import { api } from '../services/backend';
 import {
   checkSupabaseHealth,
   fetchProductsFromSupabase,
@@ -204,7 +205,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
 
       // 2. Fallback to API / local DB
-      const res = await fetch('/api/data');
+      const res = await api('/api/data');
       if (!res.ok) throw new Error('Erreur de chargement');
       const data = await res.json();
       if (data.settings) setSettings(data.settings);
@@ -218,7 +219,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const currentToken = localStorage.getItem(STORAGE_KEY_TOKEN);
       if (currentToken) {
         try {
-          const adminBtpRes = await fetch('/api/admin/btp', {
+          const adminBtpRes = await api('/api/admin/btp', {
             headers: { Authorization: `Bearer ${currentToken}` },
           });
           if (adminBtpRes.ok) {
@@ -248,7 +249,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       try {
-        const res = await fetch('/api/admin/check', {
+        const res = await api('/api/admin/check', {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
@@ -329,7 +330,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (shop: ShopType, id: string): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch(`/api/products/${shop}/${id}`, {
+        const res = await api(`/api/products/${shop}/${id}`, {
           method: 'DELETE',
           headers: authHeaders(),
         });
@@ -370,7 +371,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (shop: ShopType, orderedIds: string[]): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch('/api/products/reorder', {
+        const res = await api('/api/products/reorder', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ shop, orderedIds }),
@@ -407,7 +408,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (shop: ShopType, id: string): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch('/api/featured/toggle', {
+        const res = await api('/api/featured/toggle', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ shop, id }),
@@ -441,7 +442,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (shop: ShopType, orderedIds: string[]): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch('/api/featured/reorder', {
+        const res = await api('/api/featured/reorder', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ shop, orderedIds }),
@@ -471,7 +472,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (newSettings: Partial<SiteSettings>): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch('/api/settings', {
+        const res = await api('/api/settings', {
           method: 'PUT',
           headers: authHeaders(),
           body: JSON.stringify(newSettings),
@@ -499,7 +500,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (brand: TextileBrand): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch(`/api/brands/${brand.id}`, {
+        const res = await api(`/api/brands/${brand.id}`, {
           method: 'PUT',
           headers: authHeaders(),
           body: JSON.stringify(brand),
@@ -528,7 +529,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (brand: TextileBrand): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch('/api/brands', {
+        const res = await api('/api/brands', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify(brand),
@@ -559,7 +560,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (id: string): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch(`/api/brands/${id}`, {
+        const res = await api(`/api/brands/${id}`, {
           method: 'DELETE',
           headers: authHeaders(),
         });
@@ -627,7 +628,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (id: string): Promise<boolean> => {
       setIsSaving(true);
       try {
-        const res = await fetch(`/api/btp/${id}`, {
+        const res = await api(`/api/btp/${id}`, {
           method: 'DELETE',
           headers: authHeaders(),
         });
@@ -673,7 +674,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         reader.readAsDataURL(file);
       });
 
-      const res = await fetch('/api/upload', {
+      const res = await api('/api/upload', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ data: base64, filename: file.name }),
@@ -694,7 +695,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (password: string): Promise<boolean> => {
       try {
-        const res = await fetch('/api/admin/login', {
+        const res = await api('/api/admin/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password }),
@@ -719,7 +720,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // 12. Logout
   const logout = useCallback(() => {
-    fetch('/api/admin/logout', {
+    api('/api/admin/logout', {
       method: 'POST',
       headers: authHeaders(),
     }).catch(() => {});
@@ -733,7 +734,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const changePassword = useCallback(
     async (newPassword: string): Promise<boolean> => {
       try {
-        const res = await fetch('/api/admin/change-password', {
+        const res = await api('/api/admin/change-password', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ newPassword }),
@@ -755,7 +756,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // 14. Reset Database
   const resetDatabase = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch('/api/admin/reset', {
+      const res = await api('/api/admin/reset', {
         method: 'POST',
         headers: authHeaders(),
       });
@@ -773,7 +774,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const restoreDatabase = useCallback(
     async (data: DatabaseSchema): Promise<boolean> => {
       try {
-        const res = await fetch('/api/restore', {
+        const res = await api('/api/restore', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify(data),

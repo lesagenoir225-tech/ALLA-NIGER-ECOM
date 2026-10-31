@@ -46,9 +46,10 @@ const DATA_PAYLOAD = {
   featured: { electronique: ['samsung-a14'], textile: ['bazin-drews'] },
 };
 const FLAGS_PAYLOAD = { authenticated: false, hasTables: false };
-const fakeResponse = (payload: any) => ({
+const fakeResponse = (payload: any, contentType = 'application/json') => ({
   ok: true,
   status: 200,
+  headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null) },
   json: async () => payload,
   text: async () => JSON.stringify(payload),
 });
@@ -263,6 +264,7 @@ globalAny.fetch = async (input: any) => {
     return {
       ok: false,
       status: 404,
+      headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? 'text/html' : null) },
       json: async () => {
         throw new Error('not json');
       },
