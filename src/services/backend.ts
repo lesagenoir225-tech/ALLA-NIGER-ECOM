@@ -51,6 +51,15 @@ async function hasNodeApi(): Promise<boolean> {
   return nodeApiAvailable;
 }
 
+/**
+ * Vrai quand le site est servi sans serveur Node (LWS, Vercel statique).
+ * Utile à l'interface pour adapter ce qui n'existe pas dans ce mode :
+ * lien de téléchargement de l'archive, synchronisation complète, section BTP.
+ */
+export async function isStaticHosting(): Promise<boolean> {
+  return !(await hasNodeApi());
+}
+
 function bearerToken(init?: RequestInit): string {
   const headers = init?.headers;
   if (!headers) return '';
@@ -465,6 +474,15 @@ export async function api(path: string, init?: RequestInit): Promise<ApiResponse
 
     return failure(`Route non gérée hors serveur Node : ${method} ${path}`, 501);
   } catch (err: any) {
-    return failure(err?.message || 'Erreur de la base de données.', 400);
+    const message = String(err?.message || '');
+    // Panne réseau (Wi-Fi coupé, Supabase injoignable) : le navigateur renvoie
+    // « Failed to fetch », illisible pour l'administrateur.
+    if (/failed to fetch|network ?error|load failed|fetch failed|err_/i.test(message)) {
+      return failure(
+        'Base de données injoignable. Vérifiez votre connexion internet, puis réessayez.',
+        503,
+      );
+    }
+    return failure(message || 'Erreur de la base de données.', 400);
   }
 }

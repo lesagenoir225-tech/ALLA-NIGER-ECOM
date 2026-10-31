@@ -43,6 +43,7 @@ import {
   SUPABASE_SQL_EDITOR_URL,
   SUPABASE_URL,
 } from '../services/supabase';
+import { isStaticHosting } from '../services/backend';
 
 type AdminTab =
   | 'dashboard'
@@ -1951,6 +1952,19 @@ function ProductModal({
 
 // 7. SUPABASE INTEGRATION CARD
 function SupabaseIntegrationCard() {
+  // Le site peut être servi par le serveur Node ou en statique (LWS).
+  // La synchronisation complète et l'archive ZIP n'existent que côté serveur.
+  const [staticHosting, setStaticHosting] = useState(false);
+  useEffect(() => {
+    let active = true;
+    isStaticHosting().then((value) => {
+      if (active) setStaticHosting(value);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const { settings, products, brands, featured, showNotification } = useStore();
   const [checking, setChecking] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -1973,6 +1987,13 @@ function SupabaseIntegrationCard() {
   };
 
   const handleSync = async () => {
+    if (staticHosting) {
+      showNotification(
+        'info',
+        'La synchronisation complète exige le serveur Node : sur un hébergement statique, les écritures passent par les fonctions PostgreSQL (enregistrement article par article, qui fonctionne normalement).'
+      );
+      return;
+    }
     setSyncing(true);
     try {
       const res = await syncAllToSupabase({
@@ -2155,10 +2176,25 @@ CREATE POLICY "Écriture des paramètres" ON public.site_settings FOR ALL USING 
             type="button"
             disabled={syncing}
             onClick={handleSync}
-            className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-emerald-700 px-4 text-xs font-bold text-white hover:bg-emerald-800 shadow-sm transition"
+            title={
+              staticHosting
+                ? 'Indisponible sur hébergement statique : les enregistrements article par article sont déjà transmis à la base.'
+                : 'Recopier tout le catalogue local vers Supabase'
+            }
+            className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl px-4 text-xs font-bold shadow-sm transition ${
+              staticHosting
+                ? 'bg-slate-100 text-slate-500'
+                : 'bg-emerald-700 text-white hover:bg-emerald-800'
+            }`}
           >
             <Database className="h-3.5 w-3.5" />
-            <span>{syncing ? 'Synchronisation...' : 'Synchroniser vers Supabase'}</span>
+            <span>
+              {syncing
+                ? 'Synchronisation...'
+                : staticHosting
+                ? 'Synchronisation (serveur Node requis)'
+                : 'Synchroniser vers Supabase'}
+            </span>
           </button>
 
           <button
@@ -2171,7 +2207,11 @@ CREATE POLICY "Écriture des paramètres" ON public.site_settings FOR ALL USING 
           </button>
 
           <a
-            href="/api/download/lws-zip"
+            href={
+              staticHosting
+                ? 'https://github.com/lesagenoir225-tech/ALLA-NIGER-ECOM/raw/main/release/alffa-niger-lws.zip'
+                : '/api/download/lws-zip'
+            }
             download="alffa-niger-lws.zip"
             className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-[var(--night)] px-4 text-xs font-bold text-white hover:bg-[var(--night-2)] shadow-sm transition"
             title="Télécharger l'archive ZIP prête pour hébergement LWS"

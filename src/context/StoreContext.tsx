@@ -4,6 +4,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from 'react';
 import { DatabaseSchema, Product, ShopType, SiteSettings, TextileBrand, BtpProject } from '../types';
@@ -16,7 +17,7 @@ import {
   INITIAL_FEATURED,
   INITIAL_BTP_PROJECTS,
 } from '../data/initialData';
-import { api } from '../services/backend';
+import { api, ApiResponse } from '../services/backend';
 import {
   checkSupabaseHealth,
   fetchProductsFromSupabase,
@@ -172,6 +173,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  /**
+   * Miroir des données déjà chargées, utilisé UNIQUEMENT pour réécrire le
+   * cache local. Il évite de mettre `settings`/`brands`/`featured` dans les
+   * dépendances de `refreshData` : sans lui, l'effet de démarrage se
+   * relançait à chaque mise à jour de ces états (boucle de rechargement
+   * infinie, et requêtes répétées vers Supabase quand la base est vide).
+   */
+  const cacheRef = useRef({ settings, featured, brands, btpProjects });
+  useEffect(() => {
+    cacheRef.current = { settings, featured, brands, btpProjects };
+  }, [settings, featured, brands, btpProjects]);
+
   // Fetch data from server & Supabase
   const refreshData = useCallback(async () => {
     try {
@@ -192,12 +205,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (supaSettings) {
             setSettings((prev) => ({ ...prev, ...supaSettings }));
           }
+          const cached = cacheRef.current;
           syncLocalCache(
-            supaSettings ? ({ ...settings, ...supaSettings } as SiteSettings) : settings,
+            supaSettings ? ({ ...cached.settings, ...supaSettings } as SiteSettings) : cached.settings,
             supaProds,
-            featured,
-            supaBrands || brands,
-            btpProjects
+            cached.featured,
+            supaBrands || cached.brands,
+            cached.btpProjects
           );
           setIsLoading(false);
           return;
@@ -235,7 +249,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [syncLocalCache, settings, featured, brands, btpProjects]);
+  }, [syncLocalCache]);
 
   // Check admin session on startup or token change
   useEffect(() => {
@@ -265,7 +279,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, [token]);
 
-  // Auth header helper
+  /**
+ * Extrait le message d'une réponse en erreur, quel que soit son format.
+ *
+ * Sur un hébergement statique (LWS), une route `/api/...` inconnue renvoie la
+ * page HTML du site. `res.json()` lèverait alors « Unexpected token '<' » :
+ * l'administrateur voyait un message technique incompréhensible au lieu de la
+ * raison réelle de l'échec.
+ */
+async function errorMessage(res: ApiResponse, fallback: string): Promise<string> {
+  try {
+    const text = await res.text();
+    if (!text) return fallback;
+    try {
+      const data = JSON.parse(text);
+      return data?.error || data?.message || fallback;
+    } catch {
+      if (/<!doctype|<html/i.test(text)) {
+        return `${fallback} Aucune réponse de la base de données : le site est servi en statique et la requête n’a pas atteint Supabase.`;
+      }
+      return fallback;
+    }
+  } catch {
+    return fallback;
+  }
+}
+
+// Auth header helper
   const authHeaders = useCallback(() => {
     return {
       'Content-Type': 'application/json',
@@ -284,15 +324,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           : '/api/products';
         const method = existing ? 'PUT' : 'POST';
 
-        const res = await fetch(url, {
+        // `api` (et non `fetch`) : sur un hébergement statique, l'adaptateur
+        // redirige vers la fonction PostgreSQL `admin_save_product`. Sans lui,
+        // l'enregistrement partait vers une route inexistante et échouait.
+        const res = await api(url, {
           method,
           headers: authHeaders(),
           body: JSON.stringify(product),
         });
 
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur lors de l’enregistrement');
+          throw new Error(await errorMessage(res, 'Impossible d’enregistrer le produit.'));
         }
 
         // Optimistically update
@@ -335,8 +377,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur de suppression');
+          throw new Error(await errorMessage(res, 'Suppression impossible.'));
         }
 
         setProducts((prev) => {
@@ -376,7 +417,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
           body: JSON.stringify({ shop, orderedIds }),
         });
-        if (!res.ok) throw new Error('Erreur de réorganisation');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Réorganisation impossible.'));
+        }
 
         setProducts((prev) => {
           const shopItems = prev.filter((p) => p.shop === shop);
@@ -413,7 +456,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
           body: JSON.stringify({ shop, id }),
         });
-        if (!res.ok) throw new Error('Erreur');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Mise à jour impossible.'));
+        }
         const data = await res.json();
 
         setFeatured((prev) => {
@@ -447,7 +492,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
           body: JSON.stringify({ shop, orderedIds }),
         });
-        if (!res.ok) throw new Error('Erreur');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Réorganisation impossible.'));
+        }
 
         setFeatured((prev) => {
           const next = { ...prev, [shop]: orderedIds };
@@ -478,8 +525,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify(newSettings),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur lors de l’enregistrement des paramètres');
+          throw new Error(await errorMessage(res, 'Impossible d’enregistrer les paramètres.'));
         }
         const data = await res.json();
         setSettings(data.settings);
@@ -505,7 +551,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
           body: JSON.stringify(brand),
         });
-        if (!res.ok) throw new Error('Erreur de mise à jour de la marque');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Mise à jour de la marque impossible.'));
+        }
 
         setBrands((prev) => {
           const next = prev.map((b) => (b.id === brand.id ? brand : b));
@@ -535,8 +583,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify(brand),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur d’ajout de marque');
+          throw new Error(await errorMessage(res, 'Impossible d’ajouter la marque.'));
         }
         setBrands((prev) => {
           const next = [...prev, brand];
@@ -564,7 +611,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           method: 'DELETE',
           headers: authHeaders(),
         });
-        if (!res.ok) throw new Error('Erreur de suppression');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Suppression impossible.'));
+        }
         setBrands((prev) => {
           const next = prev.filter((b) => b.id !== id);
           syncLocalCache(settings, products, featured, next);
@@ -591,15 +640,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const url = isExisting ? `/api/btp/${project.id}` : '/api/btp';
         const method = isExisting ? 'PUT' : 'POST';
 
-        const res = await fetch(url, {
+        const res = await api(url, {
           method,
           headers: authHeaders(),
           body: JSON.stringify(project),
         });
 
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur lors de l’enregistrement de la réalisation.');
+          throw new Error(
+            await errorMessage(res, 'Impossible d’enregistrer la réalisation.')
+          );
         }
 
         const data = await res.json();
@@ -634,8 +684,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
 
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur de suppression.');
+          throw new Error(await errorMessage(res, 'Suppression impossible.'));
         }
 
         setBtpProjects((prev) => {
@@ -681,8 +730,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Erreur d’envoi de l’image');
+        throw new Error(await errorMessage(res, 'Envoi de l’image impossible.'));
       }
 
       const data = await res.json();
@@ -701,8 +749,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({ password }),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Mot de passe incorrect.');
+          throw new Error(await errorMessage(res, 'Mot de passe incorrect.'));
         }
         const data = await res.json();
         localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
@@ -740,8 +787,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({ newPassword }),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur');
+          throw new Error(await errorMessage(res, 'Changement de mot de passe impossible.'));
         }
         showNotification('success', 'Mot de passe modifié avec succès.');
         return true;

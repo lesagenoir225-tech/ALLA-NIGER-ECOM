@@ -157,6 +157,40 @@ En conséquence :
 - Seule exception : la section **BTP** n'est pas modélisée en base et reste réservée à l'hébergement Node.
 - Les liens Google Maps des deux boutiques disposent de valeurs par défaut dans `src/data/initialData.ts`, donc ils s'affichent même sans API.
 
+### Dépannage : « j'enregistre dans l'administration et rien ne change »
+
+L'administration fonctionne sur les deux hébergements (serveur Node et site
+statique LWS), mais elle emprunte deux chemins différents :
+
+| Hébergement | Chemin d'écriture |
+|---|---|
+| Node (`npm start`, Vercel) | `/api/...` (Express, jeton vérifié par `verifyAdmin`) |
+| Statique (LWS) | fonctions PostgreSQL `admin_*` appelées avec la clé publique |
+
+Le choix est automatique : `src/services/backend.ts` teste une fois
+`/api/supabase/status`; si la réponse est du HTML (site statique), il bascule
+sur la base.
+
+À vérifier dans l'ordre quand un enregistrement ne prend pas :
+
+1. **Le message affiché.** Il est désormais explicite (« Session expirée… »,
+   « Base de données injoignable… ») et ne montre plus
+   « Unexpected token '<' … is not valid JSON ».
+2. **La session.** Elle expire après 12 h : se reconnecter sur `/#/admin`.
+3. **La connexion.** L'onglet *Tableau de bord* contient un diagnostic
+   Supabase (bouton de test) : il vérifie l'accès en lecture et la présence des
+   tables.
+4. **Le bon fichier déployé.** Le site doit contenir `assets/index-*.js`
+   correspondant au dernier build ; un ancien bundle garde l'ancien
+   comportement (vider le cache du navigateur).
+
+> Correctif apporté : l'enregistrement d'une **fiche produit** et d'une
+> **réalisation BTP** passait par `fetch('/api/products')` directement, au lieu
+> de l'adaptateur `api()`. Sur LWS cette route n'existe pas : l'envoi partait
+> dans le vide et l'interface affichait une erreur de syntaxe JSON. Les deux
+> chemins passent maintenant par l'adaptateur, et un test de fumée dédié
+> (`scripts/smoke-admin-save.tsx`) rejoue ce scénario en hébergement statique.
+
 ### Sécurité de l'administration
 
 - Jeton de session à durée **glissante** : expiration après 12 h d'inactivité (`SESSION_TTL_MS`, valeur par défaut `43200000`).
@@ -185,6 +219,11 @@ node scripts/.smoke-admin.mjs
 npx esbuild scripts/smoke-backend.ts --bundle --platform=node --format=esm --target=node20 \
   --outfile=scripts/.smoke-backend.mjs --define:import.meta.env='{"MODE":"test"}'
 node scripts/.smoke-backend.mjs
+
+# Enregistrement depuis l'administration sur un hébergement STATIQUE (jsdom)
+npx esbuild scripts/smoke-admin-save.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-admin-save.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-admin-save.mjs
 ```
 
 **Configuration de prévisualisation** : `vite.config.ts` autorise désormais les hôtes de prévisualisation (`server.allowedHosts: true`), sans impact sur le comportement local.
