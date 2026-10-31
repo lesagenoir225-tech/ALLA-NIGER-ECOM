@@ -108,6 +108,26 @@ Une photographie publiée doit obligatoirement comporter un texte alternatif des
 
 Onglet **« Expérience entrepreneuriale »** de `/#/admin` : ajout, modification, suppression (avec confirmation), domaine, description, bénéficiaire, procédure, photographies authentiques (texte alternatif obligatoire), documents privés/publics, statuts, enregistrement, prévisualisation, publication/dépublication.
 
+### Déploiement automatique vers LWS (GitHub Actions)
+
+Le workflow `.github/workflows/deploy-lws.yml` construit le site et l'envoie par FTP chez LWS
+à chaque fusion sur `main` (ou manuellement via l'onglet **Actions**).
+
+Mise en place, une seule fois — les identifiants sont saisis par le propriétaire du site,
+dans GitHub → **Settings → Secrets and variables → Actions** :
+
+| Secret | Contenu | Obligatoire |
+|---|---|---|
+| `FTP_SERVER` | hôte FTP LWS (ex. `ftp.alffaniger.com`) | oui |
+| `FTP_USERNAME` | identifiant FTP | oui |
+| `FTP_PASSWORD` | mot de passe FTP | oui |
+| `FTP_SERVER_DIR` | dossier distant (défaut `./public_html/`) | non |
+
+Le workflow vérifie les types (`tsc`), construit le site, contrôle la présence de `dist/index.html`
+et de `dist/.htaccess` (routage SPA), puis synchronise. Il n'efface aucun fichier distant non suivi.
+
+> Comparaison détaillée entre le site actuellement en ligne et ce dépôt : `docs/COMPARAISON-SITE-EN-LIGNE.md`.
+
 ### Où est réellement publié le site
 
 Le domaine **alffaniger.com** est servi par un **hébergement mutualisé LWS** (fichiers statiques), et non par Vercel.

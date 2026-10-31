@@ -1,0 +1,75 @@
+name: Déploiement LWS
+
+# Déploie automatiquement le site sur l'hébergement mutualisé LWS
+# à chaque fusion sur `main` (ou manuellement depuis l'onglet Actions).
+#
+# Prérequis — à renseigner par le propriétaire du site, jamais dans le code :
+#   GitHub → Settings → Secrets and variables → Actions → New repository secret
+#     FTP_SERVER       ex. ftp.alffaniger.com   (ou l'hôte FTP indiqué par LWS)
+#     FTP_USERNAME     identifiant FTP LWS
+#     FTP_PASSWORD     mot de passe FTP LWS
+#     FTP_SERVER_DIR   facultatif — dossier distant (défaut : ./public_html/)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-lws-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    name: Construire et déployer
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Installer les dépendances
+        # Le projet utilise des versions de Vite/TypeScript en conflit de peer
+        # dependencies : --legacy-peer-deps est requis (comme en local).
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Vérifier les types
+        run: npx tsc --noEmit
+
+      - name: Construire le site
+        run: npm run build
+
+      - name: Vérifier le build et la configuration Apache
+        run: |
+          test -f dist/index.html || { echo "::error::dist/index.html manquant"; exit 1; }
+          test -f dist/.htaccess || { echo "::error::dist/.htaccess manquant (routage SPA cassé)"; exit 1; }
+          echo "Build prêt :"
+          du -sh dist
+
+      - name: Vérifier la présence des identifiants FTP
+        run: |
+          if [ -z "${{ secrets.FTP_SERVER }}" ] || [ -z "${{ secrets.FTP_USERNAME }}" ] || [ -z "${{ secrets.FTP_PASSWORD }}" ]; then
+            echo "::error::Secrets FTP_SERVER / FTP_USERNAME / FTP_PASSWORD non configurés (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+
+      - name: Envoyer les fichiers sur LWS (FTP)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          # Dossier distant : ./public_html/ par défaut, surchargeable via FTP_SERVER_DIR
+          server-dir: ${{ secrets.FTP_SERVER_DIR || './public_html/' }}
+          local-dir: ./dist/
+          # Ne supprime pas les fichiers distants non suivis (sécurise la mise en production)
+          dangerous-clean-slate: false
+          exclude: |
+            **/.DS_Store
+            **/alffa-niger-lws.zip
