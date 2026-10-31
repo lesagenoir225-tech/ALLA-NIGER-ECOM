@@ -217,7 +217,46 @@ async function saveDatabase(db: DatabaseSchema): Promise<void> {
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS) || 12 * 60 * 60 * 1000;
 const activeSessions = new Map<string, number>();
 
+/**
+ * Secret de signature des jetons de session.
+ *
+ * Un jeton purement en mémoire ne fonctionne pas sur Vercel : chaque requête
+ * peut atterrir sur une instance différente, qui ne connaît pas la session
+ * ouverte sur une autre. On signe donc les jetons avec HMAC, ce qui les rend
+ * vérifiables par n'importe quelle instance sans stockage partagé.
+ */
+const SESSION_SECRET =
+  process.env.SESSION_SECRET ||
+  crypto
+    .createHash('sha256')
+    .update(`alffa-session::${process.env.SUPABASE_SERVICE_ROLE_KEY || 'local'}`)
+    .digest('hex');
+
+function signSessionToken(expiresAt: number): string {
+  const payload = String(expiresAt);
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+  return `${payload}.${signature}`;
+}
+
+function verifySignedToken(token: string): boolean | null {
+  if (!token.includes('.')) return null; // jeton d'ancien format, géré plus bas
+  const [payload, signature] = token.split('.');
+  const expiresAt = Number(payload);
+  if (!Number.isFinite(expiresAt)) return false;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  if (!crypto.timingSafeEqual(a, b)) return false;
+  return expiresAt > Date.now();
+}
+
 function isSessionValid(token: string): boolean {
+  // 1. Jeton signé : valable sur toutes les instances.
+  const signed = verifySignedToken(token);
+  if (signed !== null) return signed;
+
+  // 2. Repli : jeton d'ancien format conservé en mémoire (compatibilité).
   const last = activeSessions.get(token);
   if (!last) return false;
   if (Date.now() - last > SESSION_TTL_MS) {
@@ -330,8 +369,7 @@ async function startServer() {
 
     if (valid) {
       loginAttempts.delete(clientIp);
-      const token = crypto.randomBytes(32).toString('hex');
-      activeSessions.set(token, Date.now());
+      const token = signSessionToken(Date.now() + SESSION_TTL_MS);
       res.json({ success: true, token });
     } else {
       registerLoginFailure(clientIp);
