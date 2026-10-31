@@ -19,6 +19,9 @@ Les fichiers JSON locaux ne servent plus que de secours hors-ligne.
 | `seed.sql` | Contenu initial (29 produits, 3 marques, 12 sélections, 1 fiche paramètres, 14 références). Généré, idempotent. |
 | `store.ts` | Couche de persistance côté serveur (clé `service_role`, jamais exposée au navigateur). |
 | `admin-rpc.sql` | Administration **sans serveur Node** : fonctions `admin_*` en `SECURITY DEFINER`, utilisables depuis un site statique. |
+| `admin-mdp-synchronise.sql` | Mot de passe : une seule vérité entre `admin_credentials` et `admin_accounts` (corrige « parfois le mot de passe ne passe pas »). |
+| `admin-login-jamais-bloque.sql` | Anti-force brute : le mot de passe est vérifié **avant** le compteur ; un bon mot de passe n'est jamais refusé. |
+| `metier-e-sauvegardes.sql` | Sauvegarde automatique quotidienne (`admin_backups`, `pg_cron`, rétention 90 jours). |
 | `functions/upload/index.ts` | Fonction Edge (Deno) d'envoi de fichiers vers Storage. |
 
 Le fichier historique `../supabase-schema.sql` est **obsolète** : il contenait des
@@ -66,8 +69,10 @@ Navigateur ──clé publishable──> rpc('admin_login',      { password })  
 ```
 
 - Le mot de passe est vérifié en base (bcrypt via `pgcrypto`), jamais dans la page.
-- Les jetons sont stockés dans `admin_sessions` (12 h), révocables, avec
-  limitation à 10 tentatives échouées par quart d'heure.
+- Les jetons sont stockés dans `admin_sessions` (12 h, prolongés à chaque usage),
+  révocables. Les tentatives échouées sont comptées **par appareil** (en-tête
+  `x-forwarded-for`), 10 par quart d'heure ; le mot de passe est vérifié avant
+  le compteur, donc un bon mot de passe n'est jamais bloqué.
 - Les tables `admin_credentials`, `admin_sessions` et `admin_login_attempts`
   n'ont **aucune politique RLS** : elles sont inaccessibles avec la clé publique.
 - Toute écriture exige un jeton valide, sinon la fonction lève une exception.
@@ -75,11 +80,24 @@ Navigateur ──clé publishable──> rpc('admin_login',      { password })  
 Si un serveur Node est présent, l'adaptateur l'utilise en priorité : le
 comportement de Vercel est inchangé.
 
+### Réorganisation des produits (disponible partout)
+
+L'ordre d'affichage est stocké en base dans `products.display_order`, **propre à
+chaque boutique** (1 = premier article). Il est donc conservé quel que soit
+l'hébergement, et la fonction `admin_reorder_products(token, shop, ids)` écrit
+les positions depuis l'administration, y compris sur un site 100 % statique.
+
+- Nouvel article ajouté sans position : un déclencheur le place en fin de liste
+  de sa boutique.
+- Modification d'une fiche existante : la position est préservée
+  (`COALESCE(EXCLUDED.display_order, products.display_order)`).
+- `seed.sql` renseigne les positions initiales mais ne les écrase jamais lors
+  d'une régénération (`ON CONFLICT` sans `display_order`).
+
 ### Non disponible sans serveur Node
 
 | Fonction | Raison |
 |---|---|
-| Réorganisation manuelle des produits | l'ordre n'est pas stocké en base |
 | Section BTP | non modélisée en base |
 
 ## Stockage des fichiers (open source)
@@ -105,6 +123,10 @@ Navigateur ──x-admin-token──> functions/v1/upload
 - Sans jeton valide : **401**, rien n'est écrit.
 - Les justificatifs privés ne sont jamais exposés : l'URL stockée pointe vers
   la fonction, qui revérifie le jeton et délivre une **URL signée de 60 s**.
+- L'interface sait reconnaître un fichier stocké en privé (`isPrivatelyStoredUrl`,
+  serveur Node **ou** fonction Edge) : elle refuse de le republier sans réimport,
+  et signale qu'un fichier du bucket public reste joignable à son ancienne
+  adresse même si sa visibilité est repassée à « Privé ».
 - La clé `service_role` reste dans Supabase ; elle n'est jamais transmise au navigateur.
 
 Déploiement de la fonction :
@@ -136,19 +158,40 @@ un JWT Supabase, il est vérifié par la fonction elle-même dans `admin_session
 
 Le mot de passe n'est **pas** écrit dans le code : le dépôt est public.
 
-Il est stocké dans `site_settings.admin_password_hash`, sous forme d'empreinte
-SHA-256, et il est prioritaire sur la variable `ADMIN_PASSWORD`.
+**Deux emplacements, selon le mode** — savoir lequel est utilisé évite la
+plaisanterie « ça marche ici, pas là » :
+
+| Mode | Où le mot de passe est vérifié | Fonction |
+|---|---|---|
+| Site **statique** (LWS, Vercel) | table `admin_accounts` (bcrypt), avec repli sur `admin_credentials` pour les bases héritées | `admin_login_v3` → `admin_login_v2` → `admin_login` |
+| Serveur **Node** (local, Vercel complet) | `site_settings.admin_password_hash` (SHA-256), sinon variable `ADMIN_PASSWORD` | route `/api/admin/login` |
+
+Conséquence : un mot de passe modifié sur une prévisualisation **Node** n'est pas
+connu du site statique, et inversement. En production LWS, c'est **toujours**
+`admin_accounts` qui fait foi.
+
+Depuis la correction `admin-mdp-synchronise.sql`, « Changer le mot de passe »
+écrit la même empreinte dans `admin_accounts` et `admin_credentials`, et une base
+désynchronisée se répare au premier login réussi.
+
+### Ancien mécanisme (mode Node uniquement)
+
+Le mot de passe y est stocké dans `site_settings.admin_password_hash`, sous forme
+d'empreinte SHA-256, et il est prioritaire sur la variable `ADMIN_PASSWORD`.
 
 | Situation | Mot de passe accepté |
 |---|---|
 | Empreinte présente en base | celui correspondant à l'empreinte |
 | Aucune empreinte, `ADMIN_PASSWORD` défini | valeur de la variable |
-| Aucune empreinte, aucune variable | `alffa2025` (défaut historique) |
+| Aucune empreinte, aucune variable | mot de passe aléatoire généré au démarrage (affiché une fois dans la console) |
+
+Aucun mot de passe par défaut n'est écrit dans le code : un mot de passe livré
+avec l'application devient immédiatement un mot de passe public.
 
 Changer le mot de passe depuis l'écran d'administration met à jour l'empreinte
 en base : le changement survit donc aux redéploiements.
 
-Pour réinitialiser l'empreinte directement en SQL :
+Pour réinitialiser l'empreinte **du mode Node** directement en SQL :
 
 ```sql
 update public.site_settings

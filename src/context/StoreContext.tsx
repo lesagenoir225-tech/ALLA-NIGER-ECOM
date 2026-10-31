@@ -4,9 +4,11 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from 'react';
 import { DatabaseSchema, Product, ShopType, SiteSettings, TextileBrand, BtpProject } from '../types';
+import type { AdminIdentity, AdminRole } from '../types/reports';
 import {
   INITIAL_DATABASE,
   INITIAL_SETTINGS,
@@ -16,7 +18,7 @@ import {
   INITIAL_FEATURED,
   INITIAL_BTP_PROJECTS,
 } from '../data/initialData';
-import { api } from '../services/backend';
+import { api, ApiResponse } from '../services/backend';
 import {
   checkSupabaseHealth,
   fetchProductsFromSupabase,
@@ -24,6 +26,20 @@ import {
   fetchSettingsFromSupabase,
   SupabaseHealth,
 } from '../services/supabase';
+
+/**
+ * Résultat d'une tentative de connexion.
+ *
+ * L'ancien contrat (booléen) obligeait l'interface à afficher « mot de passe
+ * incorrect » même quand l'échec venait du réseau ou d'un blocage temporaire :
+ * l'administrateur croyait s'être trompé alors que le site n'avait simplement
+ * pas joint la base.
+ */
+export type LoginFailureReason = 'password' | 'locked' | 'network';
+
+export type LoginResult =
+  | { ok: true; role?: AdminRole; token?: string }
+  | { ok: false; reason: LoginFailureReason; message: string; remaining?: number };
 
 interface NotificationState {
   type: 'success' | 'error' | 'info';
@@ -59,7 +75,10 @@ interface StoreContextType {
   saveBtpProject: (project: BtpProject) => Promise<boolean>;
   deleteBtpProject: (id: string) => Promise<boolean>;
   uploadImage: (file: File) => Promise<string>;
-  login: (password: string) => Promise<boolean>;
+  login: (password: string, username?: string) => Promise<LoginResult>;
+  /** Rôle du compte connecté : le vendeur n'accède pas aux finances ni à l'équipe. */
+  role: AdminRole;
+  identity: AdminIdentity | null;
   logout: () => void;
   changePassword: (newPassword: string) => Promise<boolean>;
   resetDatabase: () => Promise<boolean>;
@@ -75,6 +94,21 @@ const StoreContext = createContext<StoreContextType | null>(null);
 
 const STORAGE_KEY_DATA = 'alffa_niger_data_v3';
 const STORAGE_KEY_TOKEN = 'alffa_niger_admin_token';
+const STORAGE_KEY_ROLE = 'alffa_niger_admin_role';
+
+/**
+ * Retire les espaces parasites et les caractères invisibles d'un mot de passe.
+ *
+ * Cause fréquente de « le mot de passe ne passe pas » : une espace ajoutée
+ * automatiquement après le mot par le clavier du téléphone, ou un caractère
+ * invisible collé depuis un message.
+ */
+export function normalizePassword(value: string): string {
+  return String(value ?? '')
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, '')
+    .replace(/[\u00a0\u2007\u202f]/g, ' ')
+    .trim();
+}
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   // Load initial fallback from localStorage or defaults
@@ -134,6 +168,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return localStorage.getItem(STORAGE_KEY_TOKEN);
   });
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [role, setRole] = useState<AdminRole>(() => {
+    const stored = localStorage.getItem(STORAGE_KEY_ROLE);
+    return stored === 'vendeur' ? 'vendeur' : 'gerant';
+  });
+  const [identity, setIdentity] = useState<AdminIdentity | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [supabaseHealth, setSupabaseHealth] = useState<SupabaseHealth | null>(null);
@@ -172,6 +211,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  /**
+   * Miroir des données déjà chargées, utilisé UNIQUEMENT pour réécrire le
+   * cache local. Il évite de mettre `settings`/`brands`/`featured` dans les
+   * dépendances de `refreshData` : sans lui, l'effet de démarrage se
+   * relançait à chaque mise à jour de ces états (boucle de rechargement
+   * infinie, et requêtes répétées vers Supabase quand la base est vide).
+   */
+  const cacheRef = useRef({ settings, featured, brands, btpProjects });
+  useEffect(() => {
+    cacheRef.current = { settings, featured, brands, btpProjects };
+  }, [settings, featured, brands, btpProjects]);
+
   // Fetch data from server & Supabase
   const refreshData = useCallback(async () => {
     try {
@@ -192,12 +243,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (supaSettings) {
             setSettings((prev) => ({ ...prev, ...supaSettings }));
           }
+          const cached = cacheRef.current;
           syncLocalCache(
-            supaSettings ? ({ ...settings, ...supaSettings } as SiteSettings) : settings,
+            supaSettings ? ({ ...cached.settings, ...supaSettings } as SiteSettings) : cached.settings,
             supaProds,
-            featured,
-            supaBrands || brands,
-            btpProjects
+            cached.featured,
+            supaBrands || cached.brands,
+            cached.btpProjects
           );
           setIsLoading(false);
           return;
@@ -235,7 +287,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [syncLocalCache, settings, featured, brands, btpProjects]);
+  }, [syncLocalCache]);
 
   // Check admin session on startup or token change
   useEffect(() => {
@@ -248,24 +300,90 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setIsAdmin(false);
         return;
       }
-      try {
-        const res = await api('/api/admin/check', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        setIsAdmin(Boolean(data.authenticated));
-        if (!data.authenticated) {
-          localStorage.removeItem(STORAGE_KEY_TOKEN);
-          setToken(null);
+      const verify = async (): Promise<boolean | null> => {
+        try {
+          const res = await api('/api/admin/check', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return null; // panne passagère : on ne conclut rien
+          const data = await res.json();
+          if (typeof data?.authenticated !== 'boolean') return null;
+          return data.authenticated;
+        } catch {
+          return null;
         }
-      } catch {
-        setIsAdmin(false);
+      };
+
+      let authenticated = await verify();
+      if (authenticated === null) {
+        // Deuxième chance : une coupure de quelques secondes ne doit pas
+        // renvoyer l'administrateur à l'écran de connexion.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        authenticated = await verify();
       }
+
+      if (authenticated === false) {
+        localStorage.removeItem(STORAGE_KEY_TOKEN);
+        localStorage.removeItem(STORAGE_KEY_ROLE);
+        setToken(null);
+        setIsAdmin(false);
+        setRole('gerant');
+        setIdentity(null);
+      } else if (authenticated === true) {
+        setIsAdmin(true);
+
+        // Rôle et nom affiché : le vendeur ne voit ni finances ni équipe.
+        try {
+          const res = await api('/api/admin/me', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const me = await res.json();
+            const nextRole: AdminRole = me?.role === 'vendeur' ? 'vendeur' : 'gerant';
+            setRole(nextRole);
+            localStorage.setItem(STORAGE_KEY_ROLE, nextRole);
+            setIdentity({
+              role: nextRole,
+              username: me?.username || 'gerant',
+              displayName: me?.displayName || 'Le Gérant',
+            });
+          }
+        } catch {
+          setRole((localStorage.getItem(STORAGE_KEY_ROLE) as AdminRole) || 'gerant');
+        }
+      }
+      // authenticated === null : on conserve l'état courant (session gardée).
     }
     checkAuth();
   }, [token]);
 
-  // Auth header helper
+  /**
+ * Extrait le message d'une réponse en erreur, quel que soit son format.
+ *
+ * Sur un hébergement statique (LWS), une route `/api/...` inconnue renvoie la
+ * page HTML du site. `res.json()` lèverait alors « Unexpected token '<' » :
+ * l'administrateur voyait un message technique incompréhensible au lieu de la
+ * raison réelle de l'échec.
+ */
+async function errorMessage(res: ApiResponse, fallback: string): Promise<string> {
+  try {
+    const text = await res.text();
+    if (!text) return fallback;
+    try {
+      const data = JSON.parse(text);
+      return data?.error || data?.message || fallback;
+    } catch {
+      if (/<!doctype|<html/i.test(text)) {
+        return `${fallback} Aucune réponse de la base de données : le site est servi en statique et la requête n’a pas atteint Supabase.`;
+      }
+      return fallback;
+    }
+  } catch {
+    return fallback;
+  }
+}
+
+// Auth header helper
   const authHeaders = useCallback(() => {
     return {
       'Content-Type': 'application/json',
@@ -284,15 +402,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           : '/api/products';
         const method = existing ? 'PUT' : 'POST';
 
-        const res = await fetch(url, {
+        // `api` (et non `fetch`) : sur un hébergement statique, l'adaptateur
+        // redirige vers la fonction PostgreSQL `admin_save_product`. Sans lui,
+        // l'enregistrement partait vers une route inexistante et échouait.
+        const res = await api(url, {
           method,
           headers: authHeaders(),
           body: JSON.stringify(product),
         });
 
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur lors de l’enregistrement');
+          throw new Error(await errorMessage(res, 'Impossible d’enregistrer le produit.'));
         }
 
         // Optimistically update
@@ -335,8 +455,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur de suppression');
+          throw new Error(await errorMessage(res, 'Suppression impossible.'));
         }
 
         setProducts((prev) => {
@@ -376,7 +495,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
           body: JSON.stringify({ shop, orderedIds }),
         });
-        if (!res.ok) throw new Error('Erreur de réorganisation');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Réorganisation impossible.'));
+        }
 
         setProducts((prev) => {
           const shopItems = prev.filter((p) => p.shop === shop);
@@ -413,7 +534,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
           body: JSON.stringify({ shop, id }),
         });
-        if (!res.ok) throw new Error('Erreur');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Mise à jour impossible.'));
+        }
         const data = await res.json();
 
         setFeatured((prev) => {
@@ -447,7 +570,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
           body: JSON.stringify({ shop, orderedIds }),
         });
-        if (!res.ok) throw new Error('Erreur');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Réorganisation impossible.'));
+        }
 
         setFeatured((prev) => {
           const next = { ...prev, [shop]: orderedIds };
@@ -478,8 +603,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify(newSettings),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur lors de l’enregistrement des paramètres');
+          throw new Error(await errorMessage(res, 'Impossible d’enregistrer les paramètres.'));
         }
         const data = await res.json();
         setSettings(data.settings);
@@ -505,7 +629,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           headers: authHeaders(),
           body: JSON.stringify(brand),
         });
-        if (!res.ok) throw new Error('Erreur de mise à jour de la marque');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Mise à jour de la marque impossible.'));
+        }
 
         setBrands((prev) => {
           const next = prev.map((b) => (b.id === brand.id ? brand : b));
@@ -535,8 +661,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify(brand),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur d’ajout de marque');
+          throw new Error(await errorMessage(res, 'Impossible d’ajouter la marque.'));
         }
         setBrands((prev) => {
           const next = [...prev, brand];
@@ -564,7 +689,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           method: 'DELETE',
           headers: authHeaders(),
         });
-        if (!res.ok) throw new Error('Erreur de suppression');
+        if (!res.ok) {
+          throw new Error(await errorMessage(res, 'Suppression impossible.'));
+        }
         setBrands((prev) => {
           const next = prev.filter((b) => b.id !== id);
           syncLocalCache(settings, products, featured, next);
@@ -591,15 +718,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const url = isExisting ? `/api/btp/${project.id}` : '/api/btp';
         const method = isExisting ? 'PUT' : 'POST';
 
-        const res = await fetch(url, {
+        const res = await api(url, {
           method,
           headers: authHeaders(),
           body: JSON.stringify(project),
         });
 
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur lors de l’enregistrement de la réalisation.');
+          throw new Error(
+            await errorMessage(res, 'Impossible d’enregistrer la réalisation.')
+          );
         }
 
         const data = await res.json();
@@ -634,8 +762,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
 
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur de suppression.');
+          throw new Error(await errorMessage(res, 'Suppression impossible.'));
         }
 
         setBtpProjects((prev) => {
@@ -681,8 +808,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Erreur d’envoi de l’image');
+        throw new Error(await errorMessage(res, 'Envoi de l’image impossible.'));
       }
 
       const data = await res.json();
@@ -692,28 +818,140 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   // 11. Login
+  /**
+   * Nettoie le mot de passe saisi.
+   *
+   * Les claviers de téléphone ajoutent parfois une espace finale, une espace
+   * insécable ou un caractère invisible (copier-coller depuis WhatsApp).
+   */
   const login = useCallback(
-    async (password: string): Promise<boolean> => {
-      try {
-        const res = await api('/api/admin/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password }),
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Mot de passe incorrect.');
-        }
-        const data = await res.json();
-        localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
-        setToken(data.token);
-        setIsAdmin(true);
-        showNotification('success', 'Connexion administrateur réussie.');
-        return true;
-      } catch (error: any) {
-        showNotification('error', error.message || 'Identifiants invalides.');
-        return false;
+    async (rawPassword: string, rawUsername?: string): Promise<LoginResult> => {
+      const password = normalizePassword(rawPassword);
+      const username = String(rawUsername || '').trim().toLowerCase();
+
+      if (!password) {
+        return { ok: false, reason: 'password', message: 'Veuillez saisir le mot de passe.' };
       }
+
+      /**
+       * Une tentative de connexion.
+       *
+       * Le motif d'échec est déduit d'abord du CODE HTTP (401 = identifiants
+       * refusés, 429 = trop de tentatives, autre = réseau). Auparavant il était
+       * déduit du texte du message : une page HTML d'erreur contenant les mots
+       * « mot de passe incorrect » faisait afficher cette phrase alors que le
+       * mot de passe n'avait jamais été vérifié.
+       */
+      const attempt = async (options?: { staticOnly?: boolean }): Promise<LoginResult> => {
+        const res = await api(
+          '/api/admin/login',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password, username }),
+          },
+          options,
+        );
+
+        let raw = '';
+        let data: any = null;
+        try {
+          raw = await res.text();
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          data = null;
+        }
+
+        // Page HTML renvoyée alors qu'on croyait parler à un serveur Node :
+        // le site est en réalité statique. On rejoue la requête par la base.
+        const looksLikeHtml = !data && /<!doctype|<html/i.test(raw);
+        if (looksLikeHtml && !options?.staticOnly) {
+          return attempt({ staticOnly: true });
+        }
+
+        if (!res.ok || data?.ok === false) {
+          const reason: LoginFailureReason =
+            res.status === 429 || data?.reason === 'locked'
+              ? 'locked'
+              : res.status === 401 || data?.reason === 'password'
+                ? 'password'
+                : 'network';
+
+          const message =
+            data?.error ||
+            data?.message ||
+            (reason === 'password'
+              ? 'Identifiant ou mot de passe incorrect.'
+              : reason === 'locked'
+                ? 'Trop de tentatives échouées. Patientez quelques minutes.'
+                : 'Connexion impossible : la base de données ne répond pas. Vérifiez votre connexion internet.');
+
+          return { ok: false as const, reason, message };
+        }
+
+        if (!data?.token) {
+          return {
+            ok: false as const,
+            reason: 'network' as const,
+            message: 'Réponse inattendue du serveur. Réessayez dans un instant.',
+          };
+        }
+
+        return {
+          ok: true as const,
+          token: data.token as string,
+          role: (data.role === 'vendeur' ? 'vendeur' : 'gerant') as AdminRole,
+        };
+      };
+
+      for (let i = 0; i < 2; i += 1) {
+        try {
+          const result = await attempt();
+          if (result.ok) {
+            const nextToken = String(result.token || '');
+            localStorage.setItem(STORAGE_KEY_TOKEN, nextToken);
+            const nextRole: AdminRole = result.role === 'vendeur' ? 'vendeur' : 'gerant';
+            localStorage.setItem(STORAGE_KEY_ROLE, nextRole);
+            setToken(nextToken);
+            setRole(nextRole);
+            setIsAdmin(true);
+            showNotification(
+              'success',
+              nextRole === 'vendeur' ? 'Connexion vendeur réussie.' : 'Connexion gérant réussie.'
+            );
+            return { ok: true, role: nextRole };
+          }
+
+          // Une coupure réseau d'un instant : une seule nouvelle tentative.
+          if (!result.ok && result.reason === 'network' && i === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 900));
+            continue;
+          }
+
+          return result;
+        } catch (error: any) {
+          const message = String(error?.message || '');
+          const transient = /failed to fetch|network ?error|load failed|fetch failed|timeout|injoignable/i.test(
+            message,
+          );
+          if (transient && i === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 900));
+            continue;
+          }
+          return {
+            ok: false,
+            reason: 'network',
+            message:
+              'Connexion impossible : la base de données ne répond pas. Vérifiez votre connexion internet, puis réessayez — le mot de passe n’est pas en cause.',
+          };
+        }
+      }
+
+      return {
+        ok: false,
+        reason: 'network',
+        message: 'Connexion impossible pour le moment. Réessayez dans un instant.',
+      };
     },
     [showNotification]
   );
@@ -725,8 +963,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       headers: authHeaders(),
     }).catch(() => {});
     localStorage.removeItem(STORAGE_KEY_TOKEN);
+    localStorage.removeItem(STORAGE_KEY_ROLE);
     setToken(null);
     setIsAdmin(false);
+    setRole('gerant');
+    setIdentity(null);
     showNotification('info', 'Déconnexion effectuée.');
   }, [authHeaders, showNotification]);
 
@@ -740,8 +981,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({ newPassword }),
         });
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Erreur');
+          throw new Error(await errorMessage(res, 'Changement de mot de passe impossible.'));
         }
         showNotification('success', 'Mot de passe modifié avec succès.');
         return true;
@@ -839,6 +1079,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     deleteBtpProject,
     uploadImage,
     login,
+    role,
+    identity,
     logout,
     changePassword,
     resetDatabase,

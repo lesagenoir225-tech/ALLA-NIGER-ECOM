@@ -220,7 +220,13 @@ export async function checkSupabaseHealth(): Promise<SupabaseHealth> {
  */
 export async function fetchProductsFromSupabase(): Promise<Product[] | null> {
   try {
-    const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
+    // L'ordre d'affichage choisi dans l'administration prime sur la date de
+    // création : `display_order` est propre à chaque boutique.
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .order('display_order', { ascending: true })
+      .order('created_at', { ascending: true });
     if (error || !data) return null;
     return data.map((p) => ({
       id: p.id,
@@ -291,6 +297,8 @@ export async function fetchSettingsFromSupabase(): Promise<Partial<SiteSettings>
       siteUrl: data.site_url,
       legalName: data.legal_name,
       legalInfo: data.legal_info,
+      nif: data.nif,
+      rccm: data.rccm,
       privacyText: data.privacy_text,
       heroTitle: data.hero_title,
       heroSubtitle: data.hero_subtitle,
@@ -400,6 +408,8 @@ export async function saveSettingsToSupabase(s: Partial<SiteSettings>): Promise<
     if (s.siteUrl !== undefined) payload.site_url = s.siteUrl;
     if (s.legalName !== undefined) payload.legal_name = s.legalName;
     if (s.legalInfo !== undefined) payload.legal_info = s.legalInfo;
+    if (s.nif !== undefined) payload.nif = s.nif;
+    if (s.rccm !== undefined) payload.rccm = s.rccm;
     if (s.privacyText !== undefined) payload.privacy_text = s.privacyText;
     if (s.heroTitle !== undefined) payload.hero_title = s.heroTitle;
     if (s.heroSubtitle !== undefined) payload.hero_subtitle = s.heroSubtitle;
@@ -437,6 +447,8 @@ export async function syncAllToSupabase(db: DatabaseSchema): Promise<{ success: 
       site_url: db.settings.siteUrl,
       legal_name: db.settings.legalName,
       legal_info: db.settings.legalInfo,
+      nif: db.settings.nif,
+      rccm: db.settings.rccm,
       privacy_text: db.settings.privacyText,
       hero_title: db.settings.heroTitle,
       hero_subtitle: db.settings.heroSubtitle,
@@ -459,27 +471,34 @@ export async function syncAllToSupabase(db: DatabaseSchema): Promise<{ success: 
     if (bRes.error) throw new Error(`Erreur brands: ${bRes.error.message}`);
 
     // 3. Synchroniser les produits
-    const productsPayload = db.products.map((p) => ({
-      id: p.id,
-      shop: p.shop,
-      name: p.name,
-      brand: p.brand,
-      category: p.category,
-      price: p.price,
-      availability: p.availability,
-      capacity: p.capacity || null,
-      colors: p.colors || null,
-      condition: p.condition || null,
-      reference: p.reference || null,
-      description: p.description || null,
-      specs: p.specs || null,
-      model: p.model || null,
-      image: p.image || null,
-      source_image: p.sourceImage || null,
-      is_new: p.isNew || false,
-      hidden: p.hidden || false,
-      created_at: p.createdAt,
-    }));
+    //    La position dans le tableau (filtré par boutique) devient l'ordre
+    //    d'affichage : la synchronisation conserve donc le réordonnancement.
+    const positionInShop: Record<string, number> = {};
+    const productsPayload = db.products.map((p) => {
+      positionInShop[p.shop] = (positionInShop[p.shop] || 0) + 1;
+      return {
+        id: p.id,
+        shop: p.shop,
+        name: p.name,
+        brand: p.brand,
+        category: p.category,
+        price: p.price,
+        availability: p.availability,
+        capacity: p.capacity || null,
+        colors: p.colors || null,
+        condition: p.condition || null,
+        reference: p.reference || null,
+        description: p.description || null,
+        specs: p.specs || null,
+        model: p.model || null,
+        image: p.image || null,
+        source_image: p.sourceImage || null,
+        is_new: p.isNew || false,
+        hidden: p.hidden || false,
+        created_at: p.createdAt,
+        display_order: positionInShop[p.shop],
+      };
+    });
 
     const pRes = await supabase.from('products').upsert(productsPayload);
     if (pRes.error) throw new Error(`Erreur products: ${pRes.error.message}`);

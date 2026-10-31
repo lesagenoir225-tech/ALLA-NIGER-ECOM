@@ -14,6 +14,7 @@ import { Legal } from './pages/Legal';
 import { Admin } from './pages/Admin';
 import { Experience } from './pages/Experience';
 import { NotFound } from './pages/NotFound';
+import { VerifyReceipt } from './pages/VerifyReceipt';
 
 function AppContent() {
   const route = useRoute();
@@ -60,6 +61,10 @@ function AppContent() {
   } else if (first === 'experience-entrepreneuriale') {
     currentShop = 'home';
     pageComponent = <Experience />;
+  } else if (first === 'verifier') {
+    // Vérification publique d'un reçu : accessible sans connexion.
+    currentShop = 'home';
+    pageComponent = <VerifyReceipt />;
   } else if (first === 'admin') {
     currentShop = 'home';
     pageComponent = <Admin />;

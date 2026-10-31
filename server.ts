@@ -17,6 +17,36 @@ import {
   remoteWritesEnabled,
   remoteReadsEnabled,
 } from './supabase/store';
+import {
+  applyMovement,
+  buildOverview,
+  createReceipt,
+  forgetProduct,
+  listReceipts,
+  voidReceipt,
+  verifyReceiptCode,
+} from './server/stock';
+import {
+  authenticate as authenticateAccount,
+  changePassword as changeAccountPassword,
+  deleteAccount as deleteStoredAccount,
+  findById as findAccountById,
+  hasAccounts,
+  listAccounts,
+  saveAccount as saveStoredAccount,
+  seedManagerIfEmpty,
+} from './server/accounts';
+import {
+  buildExport,
+  buildFinanceOverview,
+  buildSalesStats,
+  listBackups,
+  readBackup,
+  writeDailyBackup,
+  deleteExpense as deleteStoredExpense,
+  listExpenses,
+  saveExpense as saveStoredExpense,
+} from './server/reports';
 
 dotenv.config();
 
@@ -232,40 +262,83 @@ const SESSION_SECRET =
     .update(`alffa-session::${process.env.SUPABASE_SERVICE_ROLE_KEY || 'local'}`)
     .digest('hex');
 
-function signSessionToken(expiresAt: number): string {
-  const payload = String(expiresAt);
+interface SessionInfo {
+  valid: boolean;
+  accountId: string;
+  role: 'gerant' | 'vendeur';
+}
+
+function signSessionToken(
+  expiresAt: number,
+  accountId = 'acc-gerant',
+  role: 'gerant' | 'vendeur' = 'gerant'
+): string {
+  const payload = `${expiresAt}.${accountId}.${role}`;
   const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
   return `${payload}.${signature}`;
 }
 
-function verifySignedToken(token: string): boolean | null {
+function parseSessionToken(token: string): SessionInfo | null {
   if (!token.includes('.')) return null; // jeton d'ancien format, géré plus bas
-  const [payload, signature] = token.split('.');
-  const expiresAt = Number(payload);
-  if (!Number.isFinite(expiresAt)) return false;
+
+  const parts = token.split('.');
+  // Format historique « expiration.signature » : considéré comme gérant.
+  const payload = parts.slice(0, -1).join('.');
+  const signature = parts[parts.length - 1];
+  const [expiresRaw, accountId, role] = payload.split('.');
+  const expiresAt = Number(expiresRaw);
+  if (!Number.isFinite(expiresAt)) return { valid: false, accountId: '', role: 'gerant' };
+
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
   const a = Buffer.from(signature);
   const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  if (!crypto.timingSafeEqual(a, b)) return false;
-  return expiresAt > Date.now();
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { valid: false, accountId: '', role: 'gerant' };
+  }
+
+  return {
+    valid: expiresAt > Date.now(),
+    accountId: accountId || 'acc-gerant',
+    role: role === 'vendeur' ? 'vendeur' : 'gerant',
+  };
+}
+
+function sessionInfo(token: string): SessionInfo | null {
+  const parsed = parseSessionToken(token);
+  if (parsed) return parsed;
+  // Repli : jetons d'ancien format conservés en mémoire.
+  const last = activeSessions.get(token);
+  if (last === undefined) return null;
+  if (Date.now() - last > SESSION_TTL_MS) {
+    activeSessions.delete(token);
+    return null;
+  }
+  activeSessions.set(token, Date.now());
+  return { valid: true, accountId: 'acc-gerant', role: 'gerant' };
 }
 
 function isSessionValid(token: string): boolean {
-  // 1. Jeton signé : valable sur toutes les instances.
-  const signed = verifySignedToken(token);
-  if (signed !== null) return signed;
+  return Boolean(sessionInfo(token)?.valid);
+}
 
-  // 2. Repli : jeton d'ancien format conservé en mémoire (compatibilité).
-  const last = activeSessions.get(token);
-  if (!last) return false;
-  if (Date.now() - last > SESSION_TTL_MS) {
-    activeSessions.delete(token);
-    return false;
+/** Rôle porté par la requête (gérant par défaut si indéterminé). */
+function requestIdentity(req: Request): { accountId: string; role: 'gerant' | 'vendeur' } {
+  const header = req.headers.authorization;
+  if (header && header.startsWith('Bearer ')) {
+    const info = sessionInfo(header.slice(7).trim());
+    if (info?.valid) return { accountId: info.accountId, role: info.role };
   }
-  // Renouvellement glissant tant que l'administrateur est actif.
-  activeSessions.set(token, Date.now());
-  return true;
+  return { accountId: '', role: 'gerant' };
+}
+
+/** Réserve une route au gérant. */
+function requireManager(req: Request, res: Response, next: NextFunction) {
+  if (requestIdentity(req).role !== 'gerant') {
+    return res.status(403).json({
+      error: 'Action réservée au gérant. Votre compte est un compte vendeur.',
+    });
+  }
+  next();
 }
 
 // Limitation des tentatives de connexion (anti-force brute, en mémoire)
@@ -295,8 +368,24 @@ function registerLoginFailure(ip: string) {
   }
 }
 
-// Admin password verification
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'alffa2025';
+// --- Mot de passe administrateur (mode serveur) -----------------------------
+// Aucun mot de passe n'est écrit dans le code : un mot de passe livré avec
+// l'application devient un mot de passe public. Trois sources, dans l'ordre :
+//   1. la variable d'environnement ADMIN_PASSWORD ;
+//   2. l'empreinte enregistrée depuis l'administration (data/database.json) ;
+//   3. à défaut, un mot de passe aléatoire créé au démarrage et affiché UNE
+//      fois dans la console du serveur.
+function generateServerPassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(14);
+  let out = '';
+  for (const byte of bytes) out += alphabet[byte % alphabet.length];
+  return `${out.slice(0, 6)}-${out.slice(6, 10)}-${out.slice(10, 14)}`;
+}
+
+const ENV_ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '').trim();
+const GENERATED_ADMIN_PASSWORD = ENV_ADMIN_PASSWORD ? '' : generateServerPassword();
+const SERVER_ADMIN_PASSWORD = ENV_ADMIN_PASSWORD || GENERATED_ADMIN_PASSWORD;
 
 function verifyAdmin(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
@@ -353,29 +442,49 @@ async function startServer() {
       });
     }
 
-    const { password } = req.body;
-    const db = await loadDatabase();
-    const expectedPassword = db.adminPasswordHash
-      ? undefined // custom hashed password
-      : DEFAULT_ADMIN_PASSWORD;
+    // Espaces parasites ignorés : les claviers de téléphone en ajoutent parfois.
+    // Espaces et caractères invisibles retirés : les claviers de téléphone et
+    // les gestionnaires de mots de passe en ajoutent parfois.
+    const password = String(req.body?.password ?? '')
+      .replace(/[\u200b-\u200d\u2060\ufeff]/g, '')
+      .replace(/[\u00a0\u2007\u202f]/g, ' ')
+      .trim();
+    const username = String(req.body?.username ?? '').trim().toLowerCase() || 'gerant';
 
-    let valid = false;
-    if (db.adminPasswordHash) {
-      const hash = crypto.createHash('sha256').update(String(password)).digest('hex');
-      valid = hash === db.adminPasswordHash;
-    } else {
-      valid = password === expectedPassword;
+    let account = authenticateAccount(username, password);
+
+    // Premier démarrage : le compte gérant est créé avec les identifiants
+    // historiques (empreinte SHA-256 de database.json ou ADMIN_PASSWORD).
+    if (!account && !hasAccounts()) {
+      const db = await loadDatabase();
+      const expectedPassword = db.adminPasswordHash ? undefined : SERVER_ADMIN_PASSWORD;
+      const legacyValid = db.adminPasswordHash
+        ? crypto.createHash('sha256').update(String(password)).digest('hex') === db.adminPasswordHash
+        : password === expectedPassword;
+
+      if (legacyValid && username === 'gerant') {
+        const seeded = seedManagerIfEmpty(username, password);
+        if (seeded) {
+          account = { ...seeded, active: seeded.active };
+        }
+      }
     }
 
-    if (valid) {
+    if (account) {
       loginAttempts.delete(clientIp);
-      const token = signSessionToken(Date.now() + SESSION_TTL_MS);
-      res.json({ success: true, token });
+      const token = signSessionToken(Date.now() + SESSION_TTL_MS, account.id, account.role);
+      res.json({
+        success: true,
+        token,
+        role: account.role,
+        username: account.username,
+        displayName: account.displayName || account.username,
+      });
     } else {
       registerLoginFailure(clientIp);
       const after = loginAttemptState(clientIp);
       res.status(401).json({
-        error: 'Mot de passe incorrect.',
+        error: 'Identifiant ou mot de passe incorrect.',
         attemptsRemaining: after.remaining,
       });
     }
@@ -404,7 +513,7 @@ async function startServer() {
   });
 
   // 5. Change Admin Password
-  app.post('/api/admin/change-password', verifyAdmin, async (req: Request, res: Response) => {
+  app.post('/api/admin/change-password', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const { newPassword } = req.body;
     if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
       return res.status(400).json({ error: 'Le nouveau mot de passe doit comporter au moins 6 caractères.' });
@@ -412,11 +521,20 @@ async function startServer() {
     const db = await loadDatabase();
     db.adminPasswordHash = crypto.createHash('sha256').update(newPassword).digest('hex');
     await saveDatabase(db);
+
+    // Le compte correspondant suit : sans cela, l'ancien mot de passe resterait
+    // valable via la gestion d'équipe.
+    const identity = requestIdentity(req);
+    try {
+      if (findAccountById(identity.accountId)) {
+        changeAccountPassword(identity.accountId, newPassword);
+      }
+    } catch {}
     res.json({ success: true, message: 'Mot de passe administrateur mis à jour avec succès.' });
   });
 
   // 6. Update Settings
-  app.put('/api/settings', verifyAdmin, async (req: Request, res: Response) => {
+  app.put('/api/settings', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const newSettings: Partial<SiteSettings> = req.body;
     const db = await loadDatabase();
     db.settings = {
@@ -428,7 +546,7 @@ async function startServer() {
   });
 
   // 7. Add Product
-  app.post('/api/products', verifyAdmin, async (req: Request, res: Response) => {
+  app.post('/api/products', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const product: Product = req.body;
     if (!product.id || !product.name || !product.shop) {
       return res.status(400).json({ error: 'ID, nom et boutique sont obligatoires.' });
@@ -449,7 +567,7 @@ async function startServer() {
   });
 
   // 8. Update Product
-  app.put('/api/products/:shop/:id', verifyAdmin, async (req: Request, res: Response) => {
+  app.put('/api/products/:shop/:id', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const { shop, id } = req.params;
     const updated: Partial<Product> = req.body;
     const db = await loadDatabase();
@@ -468,19 +586,21 @@ async function startServer() {
   });
 
   // 9. Delete Product
-  app.delete('/api/products/:shop/:id', verifyAdmin, async (req: Request, res: Response) => {
+  app.delete('/api/products/:shop/:id', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const { shop, id } = req.params;
     const db = await loadDatabase();
     db.products = db.products.filter((p) => !(p.id === id && p.shop === shop));
     if (shop === 'electronique' || shop === 'textile') {
       db.featured[shop] = db.featured[shop].filter((fId) => fId !== id);
     }
+    // Le produit disparaît du catalogue : sa ligne de stock aussi.
+    forgetProduct(id);
     await saveDatabase(db);
     res.json({ success: true, deletedId: id });
   });
 
   // 10. Reorder Products
-  app.post('/api/products/reorder', verifyAdmin, async (req: Request, res: Response) => {
+  app.post('/api/products/reorder', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const { shop, orderedIds } = req.body as { shop: 'electronique' | 'textile'; orderedIds: string[] };
     if (!shop || !Array.isArray(orderedIds)) {
       return res.status(400).json({ error: 'Boutique et liste ordonnée requises.' });
@@ -506,8 +626,199 @@ async function startServer() {
     res.json({ success: true, products: db.products });
   });
 
+  // 10 bis. GESTION DE STOCK
+  app.get('/api/admin/stock', verifyAdmin, async (_req: Request, res: Response) => {
+    const db = await loadDatabase();
+    res.json({ success: true, ...buildOverview(db.products) });
+  });
+
+  app.post('/api/admin/stock/move', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const db = await loadDatabase();
+      const result = applyMovement(db.products, req.body);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Mouvement de stock refusé.' });
+    }
+  });
+
+  // 10 ter. REÇUS
+  app.get('/api/admin/receipts', verifyAdmin, async (_req: Request, res: Response) => {
+    res.json({ success: true, receipts: listReceipts() });
+  });
+
+  app.post('/api/admin/receipts', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const db = await loadDatabase();
+      const receipt = createReceipt(db.products, req.body);
+      res.json({ success: true, receipt });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Création du reçu impossible.' });
+    }
+  });
+
+  app.post('/api/admin/receipts/:id/void', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const db = await loadDatabase();
+      const receipt = voidReceipt(db.products, req.params.id);
+      res.json({ success: true, receipt });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Annulation impossible.' });
+    }
+  });
+
   // 11. Toggle Featured
-  app.post('/api/featured/toggle', verifyAdmin, async (req: Request, res: Response) => {
+  // --- Inventaire : la quantité saisie devient la quantité réelle -----------
+  app.post('/api/admin/stock/set', verifyAdmin, requireManager, async (req: Request, res: Response) => {
+    try {
+      const db = await loadDatabase();
+      const result = applyMovement(db.products, {
+        productId: String(req.body?.productId || ''),
+        type: 'inventaire',
+        quantity: Number(req.body?.quantity || 0),
+        costPrice: req.body?.costPrice ?? null,
+        alertThreshold: req.body?.alertThreshold ?? null,
+        reason: req.body?.reason || 'Inventaire',
+        author: requestIdentity(req).accountId ? '' : '',
+      });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Inventaire refusé.' });
+    }
+  });
+
+  // --- Dépenses -------------------------------------------------------------
+  app.get('/api/admin/expenses', verifyAdmin, async (req: Request, res: Response) => {
+    const from = req.query.from ? Number(req.query.from) : undefined;
+    const to = req.query.to ? Number(req.query.to) : undefined;
+    res.json({ success: true, expenses: listExpenses(from, to) });
+  });
+
+  app.post('/api/admin/expenses', verifyAdmin, requireManager, async (req: Request, res: Response) => {
+    try {
+      const expense = saveStoredExpense({
+        id: req.body?.id,
+        label: String(req.body?.label || ''),
+        category: req.body?.category,
+        amount: Number(req.body?.amount || 0),
+        spentAt: req.body?.spentAt ? Number(req.body.spentAt) : undefined,
+        note: req.body?.note,
+        author: req.body?.author,
+      });
+      res.json({ success: true, expense });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Enregistrement impossible.' });
+    }
+  });
+
+  app.delete('/api/admin/expenses/:id', verifyAdmin, requireManager, (req: Request, res: Response) => {
+    deleteStoredExpense(req.params.id);
+    res.json({ success: true });
+  });
+
+  // --- Rapports -------------------------------------------------------------
+  app.get('/api/admin/reports/stats', verifyAdmin, (req: Request, res: Response) => {
+    const from = req.query.from ? Number(req.query.from) : undefined;
+    const to = req.query.to ? Number(req.query.to) : undefined;
+    res.json({ success: true, ...buildSalesStats(from, to) });
+  });
+
+  app.get('/api/admin/reports/finance', verifyAdmin, requireManager, async (req: Request, res: Response) => {
+    const from = req.query.from ? Number(req.query.from) : undefined;
+    const to = req.query.to ? Number(req.query.to) : undefined;
+    const db = await loadDatabase();
+    res.json({ success: true, ...buildFinanceOverview(db.products, from, to) });
+  });
+
+  // --- Sauvegarde complète --------------------------------------------------
+  app.get('/api/admin/export', verifyAdmin, requireManager, async (_req: Request, res: Response) => {
+    const db = await loadDatabase();
+    res.json(buildExport({ settings: db.settings, products: db.products, brands: db.brands }));
+  });
+
+  // --- Sauvegarde automatique ----------------------------------------------
+  app.get('/api/admin/backups', verifyAdmin, requireManager, (_req: Request, res: Response) => {
+    res.json({ backups: listBackups(), today: new Date().toISOString().slice(0, 10) });
+  });
+
+  app.post('/api/admin/backups', verifyAdmin, requireManager, async (_req: Request, res: Response) => {
+    try {
+      const db = await loadDatabase();
+      const payload = buildExport({
+        settings: db.settings,
+        products: db.products,
+        brands: db.brands,
+      });
+      // Aucun secret ne doit sortir dans une sauvegarde téléchargeable.
+      if (payload.settings && typeof payload.settings === 'object') {
+        delete (payload.settings as any).adminPasswordHash;
+      }
+      const result = writeDailyBackup(payload);
+      res.json({ success: true, ...result, stored: listBackups().length });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Sauvegarde impossible.' });
+    }
+  });
+
+  app.get('/api/admin/backups/:day', verifyAdmin, requireManager, (req: Request, res: Response) => {
+    const payload = readBackup(req.params.day);
+    if (!payload) return res.status(404).json({ error: 'Aucune sauvegarde pour ce jour.' });
+    res.json(payload);
+  });
+
+  // --- Vérification publique d'un reçu (sans authentification) --------------
+  app.post('/api/public/verify-receipt', (req: Request, res: Response) => {
+    res.json(verifyReceiptCode(String(req.body?.code || '')));
+  });
+
+  // --- Comptes administrateurs ---------------------------------------------
+  app.get('/api/admin/me', verifyAdmin, (req: Request, res: Response) => {
+    const identity = requestIdentity(req);
+    const account = findAccountById(identity.accountId);
+    res.json({
+      role: identity.role,
+      username: account?.username || 'gerant',
+      displayName: account?.displayName || 'Le Gérant',
+    });
+  });
+
+  app.get('/api/admin/accounts', verifyAdmin, requireManager, (_req: Request, res: Response) => {
+    if (!hasAccounts()) {
+      return res.json({
+        success: true,
+        accounts: [{ id: 'acc-gerant', username: 'gerant', displayName: 'Le Gérant', role: 'gerant', active: true }],
+      });
+    }
+    res.json({ success: true, accounts: listAccounts() });
+  });
+
+  app.post('/api/admin/accounts', verifyAdmin, requireManager, (req: Request, res: Response) => {
+    try {
+      const account = saveStoredAccount({
+        id: req.body?.id,
+        username: String(req.body?.username || ''),
+        displayName: req.body?.displayName,
+        role: req.body?.role,
+        active: req.body?.active,
+        password: req.body?.password,
+        actorId: requestIdentity(req).accountId,
+      });
+      res.json({ success: true, account });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Enregistrement impossible.' });
+    }
+  });
+
+  app.delete('/api/admin/accounts/:id', verifyAdmin, requireManager, (req: Request, res: Response) => {
+    try {
+      deleteStoredAccount(req.params.id, requestIdentity(req).accountId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Suppression impossible.' });
+    }
+  });
+
+  app.post('/api/featured/toggle', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const { shop, id } = req.body as { shop: 'electronique' | 'textile'; id: string };
     if (!shop || !id) {
       return res.status(400).json({ error: 'Boutique et identifiant requis.' });
@@ -525,7 +836,7 @@ async function startServer() {
   });
 
   // 12. Reorder Featured
-  app.post('/api/featured/reorder', verifyAdmin, async (req: Request, res: Response) => {
+  app.post('/api/featured/reorder', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const { shop, orderedIds } = req.body as { shop: 'electronique' | 'textile'; orderedIds: string[] };
     if (!shop || !Array.isArray(orderedIds)) {
       return res.status(400).json({ error: 'Paramètres invalides.' });
@@ -537,7 +848,7 @@ async function startServer() {
   });
 
   // 13. Brand Management
-  app.put('/api/brands/:id', verifyAdmin, async (req: Request, res: Response) => {
+  app.put('/api/brands/:id', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const { id } = req.params;
     const updated: Partial<TextileBrand> = req.body;
     const db = await loadDatabase();
@@ -554,7 +865,7 @@ async function startServer() {
     res.json({ success: true, brand: db.brands[index] });
   });
 
-  app.post('/api/brands', verifyAdmin, async (req: Request, res: Response) => {
+  app.post('/api/brands', verifyAdmin, requireManager, requireManager, async (req: Request, res: Response) => {
     const brand: TextileBrand = req.body;
     if (!brand.id || !brand.name) {
       return res.status(400).json({ error: 'ID et nom requis.' });
@@ -571,7 +882,7 @@ async function startServer() {
     res.status(201).json({ success: true, brand });
   });
 
-  app.delete('/api/brands/:id', verifyAdmin, async (req: Request, res: Response) => {
+  app.delete('/api/brands/:id', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const { id } = req.params;
     const db = await loadDatabase();
     db.brands = db.brands.filter((b) => b.id !== id);
@@ -607,7 +918,7 @@ async function startServer() {
   });
 
   // Admin: Ajouter une réalisation
-  app.post('/api/btp', verifyAdmin, async (req: Request, res: Response) => {
+  app.post('/api/btp', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     try {
       const incoming: BtpProject = req.body;
       if (!incoming.title || !incoming.description) {
@@ -635,7 +946,7 @@ async function startServer() {
   });
 
   // Admin: Modifier une réalisation
-  app.put('/api/btp/:id', verifyAdmin, async (req: Request, res: Response) => {
+  app.put('/api/btp/:id', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const updates: Partial<BtpProject> = req.body;
@@ -659,7 +970,7 @@ async function startServer() {
   });
 
   // Admin: Supprimer une réalisation
-  app.delete('/api/btp/:id', verifyAdmin, async (req: Request, res: Response) => {
+  app.delete('/api/btp/:id', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const db = await loadDatabase();
@@ -819,7 +1130,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/experience', verifyAdmin, async (req: Request, res: Response) => {
+  app.post('/api/experience', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     try {
       const { reference, error } = buildExperienceReference(req.body);
       if (error || !reference) return res.status(400).json({ error });
@@ -832,7 +1143,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/experience/:id', verifyAdmin, async (req: Request, res: Response) => {
+  app.put('/api/experience/:id', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const list = await loadExperienceReferences();
@@ -848,7 +1159,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/experience/:id', verifyAdmin, async (req: Request, res: Response) => {
+  app.delete('/api/experience/:id', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const list = await loadExperienceReferences();
@@ -963,7 +1274,7 @@ async function startServer() {
     res.send(JSON.stringify(db, null, 2));
   });
 
-  app.post('/api/restore', verifyAdmin, async (req: Request, res: Response) => {
+  app.post('/api/restore', verifyAdmin, requireManager, async (req: Request, res: Response) => {
     const incoming: DatabaseSchema = req.body;
     if (!incoming || !Array.isArray(incoming.products) || !incoming.settings) {
       return res.status(400).json({ error: 'Structure de sauvegarde invalide.' });
@@ -973,7 +1284,7 @@ async function startServer() {
   });
 
   // 16. Reset to Initial Defaults
-  app.post('/api/admin/reset', verifyAdmin, async (_req: Request, res: Response) => {
+  app.post('/api/admin/reset', verifyAdmin, requireManager, async (_req: Request, res: Response) => {
     await saveDatabase(INITIAL_DATABASE);
     res.json({ success: true, message: 'Base réinitialisée aux données de départ.' });
   });
@@ -1004,7 +1315,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/supabase/sync', verifyAdmin, async (_req: Request, res: Response) => {
+  app.post('/api/supabase/sync', verifyAdmin, requireManager, async (_req: Request, res: Response) => {
     try {
       if (!remoteWritesEnabled()) {
         return res.status(503).json({
@@ -1066,6 +1377,24 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[ALFFA NIGER] Server running on http://0.0.0.0:${PORT}`);
+
+    if (GENERATED_ADMIN_PASSWORD) {
+      console.log(
+        [
+          '',
+          '┌────────────────────────────────────────────────────────────────┐',
+          '│  MOT DE PASSE ADMINISTRATEUR — généré pour cette exécution      │',
+          '└────────────────────────────────────────────────────────────────┘',
+          `   ${GENERATED_ADMIN_PASSWORD}`,
+          '',
+          '   Il n’est écrit ni dans le code, ni dans les fichiers livrés, et',
+          '   jamais envoyé au navigateur.',
+          '   Pour un mot de passe permanent : définissez ADMIN_PASSWORD, ou',
+          '   changez-le depuis l’administration (il sera enregistré chiffré).',
+          '',
+        ].join('\n'),
+      );
+    }
   });
 }
 

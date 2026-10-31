@@ -10,9 +10,10 @@ Plateforme web e-commerce moderne, dynamique, responsive et rapide pour **ALFFA 
 
 - **Deux univers distincts et étanches** : Catalogues, fiches produits, marques, filtres, sélections « À la une » et numéros WhatsApp entièrement séparés.
 - **Photos réelles intégrées** : Toutes les photos fournies ont été téléchargées et intégrées en local dans `public/images/products/` et `public/images/brands/` pour éviter toute coupure ou erreur 403, avec `object-fit: contain` pour les smartphones et `object-fit: cover` pour valoriser les motifs des bazins.
+- **Ordre d'affichage maîtrisé** : la position de chaque article est enregistrée en base (`products.display_order`, une liste par boutique) ; la flèche ↑ ↓ de l'administration est donc conservée après rechargement, y compris sur un hébergement statique.
 - **Prix en FCFA** : Affichage soigné en francs CFA (ex: `90 000 FCFA`) et mention explicite « *Prix à confirmer / Nous consulter* » pour les modèles sans prix arrêté.
 - **Commande WhatsApp pré-remplie** : Génère automatiquement un message personnalisé incluant le nom de la boutique, le modèle, la capacité/variante, le prix, la quantité demandée et le lien de la fiche. Contrôle du format international (ex. 227XXXXXXXX pour le Niger).
-- **Administration complète (7 sections)** :
+- **Administration complète (10 sections)** :
   1. *Tableau de bord* : Indicateurs clés (nombre de produits par boutique, en stock, prix à confirmer, sélections à la une) et checklist de complétion.
   2. *Produits Électronique* : Ajout, modification complète, suppression avec confirmation, masquage, réorganisation de l'ordre d'affichage.
   3. *Produits Textile* : Gestion complète des bazins et tissus.
@@ -20,8 +21,82 @@ Plateforme web e-commerce moderne, dynamique, responsive et rapide pour **ALFFA 
   5. *Marques textiles* : Gestion des marques (Drews, Gagny Lah, Getzner) et téléversement de logos.
   6. *Coordonnées & Paramètres* : Numéros WhatsApp, téléphone, email, adresse, horaires, liens sociaux, textes de présentation, mentions légales.
   7. *Images & Médias* : Téléversement et optimisation d'images jusqu'à 8 Mo.
+  8. *Expérience entrepreneuriale* : parcours, étapes, galerie et publication.
+  9. *Stock* : quantités par article, prix d'achat et de revente, valeur totale de la marchandise, alertes de réapprovisionnement et journal des mouvements (voir §5 bis).
+  10. *Reçus* : atelier d'encaissement produisant un reçu imprimable et partageable, signé et daté (voir §5 bis).
 - **Persistance réelle des données** : Base de données locale persistante (`data/database.json`) avec sauvegarde/restauration JSON et cache réactif côté client.
 - **SEO & Référencement** : Balises Open Graph, Twitter cards, balises canoniques, microdonnées Schema.org (`Product`, `Organization`), fichiers `sitemap.xml` et `robots.txt`.
+
+---
+
+## 1 bis. Stock et Reçus
+
+Deux modules pensés pour le quotidien de la boutique, disponibles en mode serveur **comme** sur l'hébergement statique LWS (fonctions PostgreSQL dédiées).
+
+### Stock
+
+- **Vue d'ensemble** : chaque article des deux univers apparaît avec sa quantité, son prix d'achat, son prix de vente et son seuil d'alerte.
+- **Quatre indicateurs** : nombre d'articles suivis, **valeur d'achat du stock** (ce que la marchandise a coûté), **valeur de revente** avec la marge potentielle en FCFA et en pourcentage, nombre d'articles à réapprovisionner ou en rupture.
+- **Mouvements** : entrée (livraison), sortie (casse, perte, usage interne), vente, retour, inventaire (quantité absolue) et ajustement. La quantité finale ne peut jamais devenir négative.
+- **Seuil d'alerte par article** : une ligne passe en « à réapprovisionner » dès que la quantité atteint le seuil.
+- **Journal** : les 60 derniers mouvements (article, type, quantité, motif, date) sont affichés ; les 2 000 derniers sont conservés.
+- **Export CSV** de l'inventaire pour impression ou tableur.
+- **Cohérence** : supprimer un produit du catalogue supprime aussi sa fiche de stock ; une vente enregistrée par un reçu décrémente automatiquement la quantité.
+
+### Reçus
+
+- **Atelier** : choix des articles dans le catalogue (quantité, prix unitaire modifiable, remise globale), mode de paiement (espèces, Orange Money, Moov Money, virement, chèque, à crédit), montant versé et note.
+- **Calculs côté serveur** : sous-total, remise, total, monnaie à rendre et statut (`payé`, `partiel`, `crédit`) sont recalculés côté serveur ; le navigateur ne fait qu'afficher.
+- **Numérotation continue** : `REC-ANNÉE-NNNN`, jamais réutilisée.
+- **Document imprimable** : logo, dénomination, slogan, adresse, téléphone, **NIF et RCCM** (renseignés dans *Coordonnées & Paramètres*), numéro, date **et heure** d'émission, détail des articles, total en chiffres **et en lettres**, montant versé, reste à payer, mention « Le Gérant » avec le cachet (`public/images/tampon.jpg`). L'impression est isolée par une feuille de style dédiée (`@media print`) : seule la feuille du reçu sort, en A5.
+- **Partage** : bouton *Partager* (partage natif du téléphone, repli WhatsApp avec le texte du reçu) et *Copier le texte* pour un envoi rapide au client.
+- **Immuabilité** : un reçu enregistré ne se modifie pas. Une erreur se corrige par **annulation** : le reçu reste consultable avec la mention « ANNULÉ », et la marchandise concernée est automatiquement remise en stock.
+
+### Où sont stockées ces données ?
+
+- **Mode serveur** : `data/stock.json` et `data/receipts.json` (hors dépôt, voir `.gitignore`), écriture atomique.
+- **Hébergement statique / Supabase** : tables `stock_items`, `stock_movements` et `receipts`, accessibles uniquement via les fonctions `admin_stock_overview`, `admin_stock_move`, `admin_list_receipts`, `admin_save_receipt` et `admin_void_receipt`, protégées par le jeton d'administration.
+
+---
+
+## 1 ter. Gestion de l'exploitation — six modules
+
+Tous fonctionnent **sans serveur Node** (hébergement LWS) : les calculs et les
+écritures passent par des fonctions PostgreSQL protégées par le jeton gérant.
+
+| Module | Onglet | Ce qu'il apporte |
+| --- | --- | --- |
+| **Statistiques de ventes** | *Statistiques* | Chiffre d'affaires du jour / 7 jours / 30 jours / année, nombre de ventes, **panier moyen**, remises accordées, reste à encaisser, ventes jour par jour, meilleures ventes, répartition par moyen de paiement, meilleurs clients. |
+| **Dépenses & bénéfice réel** | *Dépenses* + *Statistiques* | Achats, transport, loyer, salaires, communication, taxes, emballage, autre. Le bénéfice net = chiffre d'affaires − coût des marchandises vendues − dépenses. |
+| **Reçu vérifiable** | *Reçus* + page publique | Chaque reçu reçoit un **code à 8 caractères** et un **QR code** renvoyant vers `#/verifier/CODE`. La page publique affiche numéro, date, montant, statut et lignes — jamais le nom complet ni le téléphone du client. |
+| **Alertes de stock** | *Stock* | Seuil par article, compteur d'alertes, bouton **« Alerter sur WhatsApp »** qui prépare le message de réapprovisionnement avec la liste des articles sous seuil. |
+| **Multi-utilisateurs** | *Équipe* | Comptes **gérant** (tout) et **vendeur** (reçus, ventes, stock en consultation). Les onglets réservés disparaissent pour un vendeur, et la base refuse de son côté toute action non autorisée. |
+| **Sauvegarde automatique** | *Tableau de bord* | Copie complète quotidienne (conservée 90 jours, sans aucun mot de passe), téléchargeable en JSON ; planifiée par `pg_cron` à 03 h 00, et déclenchée à la première ouverture du jour si la planification n'est pas disponible. |
+
+### Règles métier
+
+- **Chiffre d'affaires** = somme des reçus non annulés. Annuler un reçu le retire des statistiques et remet la marchandise en stock.
+- **Coût des marchandises vendues** = prix d'achat × quantités vendues (issu des mouvements de stock de type `vente`). Tant que les prix d'achat ne sont pas renseignés, la marge est surestimée : l'onglet Stock le signale.
+- **Bénéfice net** = chiffre d'affaires − coût des marchandises − dépenses.
+- **Rôles** : le vendeur ne peut pas voir les finances, les dépenses, les comptes, ni annuler un reçu ; le gérant garde l'accès complet. Un gérant ne peut pas retirer ses propres droits ni supprimer son propre compte.
+- **Reçu** : immuable. Une correction = annulation (mention « ANNULÉ », stock restitué).
+- **Sauvegarde** : jamais de secret dedans (`admin_password_hash` retiré), une copie par jour, purge au-delà de 90 jours.
+
+### Où sont stockées ces données ?
+
+| Donnée | Mode serveur | Hébergement statique (LWS) |
+| --- | --- | --- |
+| Stock | `data/stock.json` | `stock_items` + `stock_movements` |
+| Reçus | `data/receipts.json` | `receipts` (+ colonne `verify_code`) |
+| Dépenses | `data/expenses.json` | `expenses` |
+| Comptes | `data/accounts.json` (scrypt) | `admin_accounts` (bcrypt) |
+| Sauvegardes | `data/backups/AAAA-MM-JJ.json` | `admin_backups` |
+
+Fonctions PostgreSQL associées : `admin_sales_stats`, `admin_finance_overview`,
+`admin_list_expenses` / `admin_save_expense` / `admin_delete_expense`,
+`public_verify_receipt`, `admin_login_v3`, `admin_role`, `admin_list_accounts` /
+`admin_save_account` / `admin_delete_account`, `admin_backup_list` /
+`admin_backup_now` / `admin_backup_get`.
 
 ---
 
@@ -48,9 +123,21 @@ npm start
 ## 3. Accès à l'Espace Administration
 
 1. Rendez-vous sur `/#/admin` ou cliquez sur « **Accès Gestion** » dans le pied de page.
-2. Saisissez le mot de passe administrateur :
-   - Mot de passe par défaut : `alffa2025` (ou la valeur de la variable `ADMIN_PASSWORD` dans `.env`).
-3. Vous pouvez changer ce mot de passe à tout moment directement depuis l'en-tête de l'administration via le bouton **« Changer mot de passe »**.
+2. Saisissez le mot de passe administrateur.
+
+**Aucun mot de passe n'est écrit dans le code, la documentation ou les fichiers
+livrés.** C'est volontaire : un mot de passe livré avec l'application est un mot
+de passe connu de tous.
+
+| Situation | Mot de passe accepté |
+|---|---|
+| Hébergement statique (LWS, Vercel) | celui enregistré dans la base (empreinte bcrypt), modifiable depuis l'administration |
+| Mode serveur avec `ADMIN_PASSWORD` | la valeur de la variable |
+| Mode serveur avec empreinte enregistrée | celui correspondant à l'empreinte |
+| Mode serveur sans variable ni empreinte | un mot de passe **aléatoire**, affiché une seule fois au démarrage dans la console |
+
+3. Vous pouvez changer ce mot de passe à tout moment depuis l'en-tête de l'administration via le bouton **« Changer mot de passe »** ; il est alors enregistré chiffré en base et survit aux redéploiements.
+4. En cas d'oubli : ouvrez une session déjà connectée et changez-le, ou réinitialisez l'empreinte directement en base (voir `supabase/README.md`). Le mot de passe n'est **jamais** affiché sur l'écran de connexion — ni en clair, ni en indice.
 
 ---
 
@@ -152,15 +239,61 @@ Le site compilé (`npm run build` → `dist/`) est une **application statique** 
 En conséquence :
 
 - **Page publique** : si `/api/experience` est indisponible (ou renvoie une page HTML), la rubrique bascule automatiquement sur le **catalogue publié intégré au build** (`src/data/experienceSeed.ts`). Aucun message d'erreur n'est présenté au visiteur ; une mention discrète indique que les références sont celles publiées à la date de mise en ligne.
-- **Administration** : la gestion des références, des médias et des paramètres **nécessite le serveur** (`npm start`). Sur un hébergement statique, l'onglet affiche un message explicite.
+- **Administration** : sans serveur Node, elle bascule automatiquement sur les fonctions PostgreSQL `admin_*` (mot de passe vérifié en base, jeton de session de 12 h) et sur la fonction Edge `upload` pour les fichiers. Produits, marques, sélections, paramètres, **réorganisation de l'ordre d'affichage** et références restent donc modifiables depuis un site 100 % statique. Détails et modèle de sécurité : `supabase/README.md`.
+- Seule exception : la section **BTP** n'est pas modélisée en base et reste réservée à l'hébergement Node.
 - Les liens Google Maps des deux boutiques disposent de valeurs par défaut dans `src/data/initialData.ts`, donc ils s'affichent même sans API.
 
-Pour que l'administration et les modifications soient aussi disponibles en production, déployez `server.ts` sur un hébergement Node (VPS, Render, Railway, LWS…) ou ajoutez des fonctions serverless.
+### Dépannage : « j'enregistre dans l'administration et rien ne change »
+
+L'administration fonctionne sur les deux hébergements (serveur Node et site
+statique LWS), mais elle emprunte deux chemins différents :
+
+| Hébergement | Chemin d'écriture |
+|---|---|
+| Node (`npm start`, Vercel) | `/api/...` (Express, jeton vérifié par `verifyAdmin`) |
+| Statique (LWS) | fonctions PostgreSQL `admin_*` appelées avec la clé publique |
+
+Le choix est automatique : `src/services/backend.ts` teste une fois
+`/api/supabase/status`; si la réponse est du HTML (site statique), il bascule
+sur la base.
+
+À vérifier dans l'ordre quand un enregistrement ne prend pas :
+
+1. **Le message affiché.** Il est désormais explicite (« Session expirée… »,
+   « Base de données injoignable… ») et ne montre plus
+   « Unexpected token '<' … is not valid JSON ».
+2. **La session.** Elle expire après 12 h : se reconnecter sur `/#/admin`.
+3. **La connexion.** L'onglet *Tableau de bord* contient un diagnostic
+   Supabase (bouton de test) : il vérifie l'accès en lecture et la présence des
+   tables.
+4. **Le bon fichier déployé.** Le site doit contenir `assets/index-*.js`
+   correspondant au dernier build ; un ancien bundle garde l'ancien
+   comportement (vider le cache du navigateur).
+
+> Correctif apporté : l'enregistrement d'une **fiche produit** et d'une
+> **réalisation BTP** passait par `fetch('/api/products')` directement, au lieu
+> de l'adaptateur `api()`. Sur LWS cette route n'existe pas : l'envoi partait
+> dans le vide et l'interface affichait une erreur de syntaxe JSON. Les deux
+> chemins passent maintenant par l'adaptateur, et un test de fumée dédié
+> (`scripts/smoke-admin-save.tsx`) rejoue ce scénario en hébergement statique.
 
 ### Sécurité de l'administration
 
-- Jeton de session à durée **glissante** : expiration après 12 h d'inactivité (`SESSION_TTL_MS`, valeur par défaut `43200000`).
-- **Limitation des tentatives de connexion** : 10 échecs par IP sur 15 minutes (`LOGIN_MAX_ATTEMPTS`, `LOGIN_WINDOW_MS`) → HTTP 429.
+- Jeton de session à durée **glissante** : chaque usage repousse l'expiration à 12 h, aussi bien en mode serveur (fonction PostgreSQL `admin_assert`) qu'en mode base directe.
+- **Limitation des tentatives de connexion** : 10 échecs **par appareil** sur 15 minutes (`LOGIN_MAX_ATTEMPTS`, `LOGIN_WINDOW_MS`) → HTTP 429. Le compteur est propre à chaque appareil : les essais ratés d'un inconnu ou d'un autre téléphone ne bloquent jamais le gérant.
+- Les tentatives ratées sont réellement enregistrées (table `admin_login_attempts`). L'ancienne version levait une exception après l'insertion, ce qui l'annulait : le compteur ne bougeait jamais et le blocage pouvait se déclencher au hasard.
+- **Espaces parasites ignorés** : une espace ajoutée par le clavier du téléphone (ou une espace insécable collée depuis WhatsApp) n'empêche plus la connexion.
+
+### « Le mot de passe ne passe pas » : ce qui a été corrigé
+
+- L'écran de connexion affichait « Mot de passe incorrect » pour **toute** erreur, y compris une panne réseau ou un blocage temporaire. Chaque cause a désormais son message : refus du mot de passe, blocage temporaire, ou base injoignable (« le mot de passe n'est pas en cause »).
+- Un bouton **œil** montre ce qui est réellement saisi : les téléphones proposent parfois un ancien mot de passe enregistré, et l'autocomplétion le remplit sans qu'on le voie.
+- Les champs désactivent la majuscule et la correction automatiques du clavier ; le champ est vidé après un refus pour ne pas renvoyer deux fois le même contenu pré-rempli.
+- En cas de coupure d'un instant, la connexion est retentée une fois automatiquement.
+- Une panne pendant le contrôle de session ne déconnecte plus l'administrateur.
+- Base : `admin_login_v2` répond en JSON (refus, blocage, succès) ; `admin_login` conserve l'ancien contrat pour que les paquets déjà déployés continuent de fonctionner pendant la mise à jour.
+- **Cause trouvée (la vraie)** : avec l'arrivée des comptes gérant/vendeur, deux empreintes du mot de passe coexistaient en base — `admin_credentials` (historique) et `admin_accounts` (utilisée par la connexion réelle). « Changer le mot de passe » ne mettait à jour que la première : le **nouveau** mot de passe était alors refusé, tandis que l'**ancien** continuait de fonctionner. D'où l'impression que « parfois ça ne passe pas ». Corrigé : le changement écrit la même empreinte dans les deux tables, et une base héritée se resynchronise automatiquement au premier login réussi.
+- **Plus aucun blocage d'un bon mot de passe** : le mot de passe est vérifié **avant** le compteur anti-force brute. Dix erreurs ne peuvent plus empêcher une connexion légitime ; elles ne font que ralentir une attaque.
 - Contrôle d'autorisation serveur sur **toutes** les routes d'écriture (`verifyAdmin`), y compris l'upload de pièces.
 - Visibilité des documents déduite du stockage réel ; aucun fichier privé n'est exposé par une URL statique.
 
@@ -180,6 +313,31 @@ node scripts/.smoke.mjs
 npx esbuild scripts/smoke-admin-experience.tsx --bundle --platform=node --format=esm --target=node20 \
   --external:jsdom --outfile=scripts/.smoke-admin.mjs --define:import.meta.env='{"MODE":"test"}'
 node scripts/.smoke-admin.mjs
+
+# Adaptateur de données (site statique) : aucun navigateur requis
+npx esbuild scripts/smoke-backend.ts --bundle --platform=node --format=esm --target=node20 \
+  --outfile=scripts/.smoke-backend.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-backend.mjs
+
+# Enregistrement depuis l'administration sur un hébergement STATIQUE (jsdom)
+npx esbuild scripts/smoke-admin-save.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-admin-save.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-admin-save.mjs
+
+# Stock et reçus : chargement, mouvements, document imprimable (jsdom)
+npx esbuild scripts/smoke-stock.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-stock.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-stock.mjs
+
+# Connexion : espaces parasites, messages réels, nouvel essai, session (jsdom)
+npx esbuild scripts/smoke-login.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-login.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-login.mjs
+
+# Six modules métier : statistiques, dépenses, reçu vérifiable + QR, équipe, sauvegarde
+npx esbuild scripts/smoke-metier.tsx --bundle --platform=node --format=esm --target=node20 \
+  --external:jsdom --outfile=scripts/.smoke-metier.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-metier.mjs
 ```
 
 **Configuration de prévisualisation** : `vite.config.ts` autorise désormais les hôtes de prévisualisation (`server.allowedHosts: true`), sans impact sur le comportement local.

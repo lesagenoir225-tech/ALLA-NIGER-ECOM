@@ -28,12 +28,28 @@ import {
   Copy,
   ExternalLink,
   RefreshCw,
+  Package,
+  ReceiptText,
+  BarChart3,
+  Wallet,
+  Users,
+  ShieldCheck,
+  ShoppingBag,
+  QrCode as QrCodeIcon,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Product, ShopType, TextileBrand, SiteSettings } from '../types';
 import { formatPrice, slugify, isValidWhatsApp, normalizeWhatsApp } from '../utils/format';
 import { ProductImage } from '../components/ui/ProductImage';
 import { ExperienceAdmin } from '../components/admin/ExperienceAdmin';
+import { StockManager } from '../components/admin/StockManager';
+import { ReceiptsManager } from '../components/admin/ReceiptsManager';
+import { ReportsManager } from '../components/admin/ReportsManager';
+import { ExpensesManager } from '../components/admin/ExpensesManager';
+import { TeamManager } from '../components/admin/TeamManager';
+import { BackupCard } from '../components/admin/BackupCard';
+import { exportAll } from '../services/stock';
+import { ADMIN_ROLE_LABELS, MANAGER_ONLY_TABS } from '../types/reports';
 import { useSeo } from '../utils/seo';
 import {
   checkSupabaseHealth,
@@ -43,6 +59,7 @@ import {
   SUPABASE_SQL_EDITOR_URL,
   SUPABASE_URL,
 } from '../services/supabase';
+import { isStaticHosting } from '../services/backend';
 
 type AdminTab =
   | 'dashboard'
@@ -52,7 +69,12 @@ type AdminTab =
   | 'brands'
   | 'settings'
   | 'media'
-  | 'experience';
+  | 'experience'
+  | 'stock'
+  | 'receipts'
+  | 'reports'
+  | 'expenses'
+  | 'team';
 
 export function Admin() {
   const {
@@ -65,6 +87,8 @@ export function Admin() {
     isSaving,
     login,
     logout,
+    role,
+    identity,
     saveProduct,
     deleteProduct,
     reorderProducts,
@@ -87,8 +111,21 @@ export function Admin() {
   });
 
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
+
+  // Un vendeur ne doit jamais afficher un onglet réservé au gérant, même si
+  // l'adresse ou une session précédente l'y avait laissé.
+  React.useEffect(() => {
+    if (role !== 'gerant' && (MANAGER_ONLY_TABS as readonly string[]).includes(activeTab)) {
+      setActiveTab('dashboard');
+    }
+  }, [role, activeTab]);
+  const [loginUsername, setLoginUsername] = useState('gerant');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [loginErrorKind, setLoginErrorKind] = useState<'password' | 'locked' | 'network' | ''>('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showPasswordHelp, setShowPasswordHelp] = useState(false);
+  const loginInputRef = React.useRef<HTMLInputElement | null>(null);
   const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
 
   // Product modal state
@@ -112,6 +149,31 @@ export function Admin() {
     setSettingsForm(settings);
   }, [settings]);
 
+  // Sauvegarde complète : JSON téléchargé depuis la base (fonctionne aussi
+  // sur un hébergement statique, contrairement à l'ancien lien /api/backup).
+  const [isExporting, setIsExporting] = useState(false);
+  const downloadBackup = async () => {
+    setIsExporting(true);
+    try {
+      const data = await exportAll();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `alffa-niger-sauvegarde-${stamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showNotification('success', 'Sauvegarde téléchargée. Conservez-la hors du téléphone.');
+    } catch (err: any) {
+      showNotification('error', err?.message || 'Export impossible.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Statistics
   const stats = useMemo(() => {
     const elec = products.filter((p) => p.shop === 'electronique');
@@ -134,14 +196,28 @@ export function Admin() {
     e.preventDefault();
     if (!loginPassword.trim()) {
       setLoginError('Veuillez renseigner le mot de passe.');
+      setLoginErrorKind('password');
       return;
     }
     setIsSubmittingLogin(true);
     setLoginError('');
-    const success = await login(loginPassword);
+    setLoginErrorKind('');
+    const result = await login(loginPassword, loginUsername);
     setIsSubmittingLogin(false);
-    if (!success) {
-      setLoginError('Mot de passe incorrect. (Par défaut : alffa2025)');
+    if (result.ok) {
+      setLoginPassword('');
+      setShowLoginPassword(false);
+      return;
+    }
+    // Le message vient du serveur : mot de passe erroné, blocage temporaire ou
+    // panne réseau ne sont plus confondus.
+    setLoginError(result.message);
+    setLoginErrorKind(result.reason);
+    if (result.reason === 'password' || result.reason === 'locked') {
+      // On vide le champ : un mot de passe pré-rempli par le téléphone ne doit
+      // pas être renvoyé tel quel à la tentative suivante.
+      setLoginPassword('');
+      setTimeout(() => loginInputRef.current?.focus(), 30);
     }
   };
 
@@ -162,25 +238,115 @@ export function Admin() {
 
           <form onSubmit={handleLogin} className="mt-6 space-y-4">
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
-                Mot de passe administrateur
+              <label
+                htmlFor="login-username"
+                className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1"
+              >
+                Identifiant
               </label>
               <input
-                type="password"
+                id="login-username"
+                type="text"
                 required
-                autoComplete="current-password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="Entrez le mot de passe..."
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="next"
+                value={loginUsername}
+                onChange={(e) => {
+                  setLoginUsername(e.target.value);
+                  if (loginError) {
+                    setLoginError('');
+                    setLoginErrorKind('');
+                  }
+                }}
+                placeholder="gerant"
                 className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)]"
               />
+              <span className="mt-1 block text-[11px] text-[var(--muted)]">
+                « gerant » pour la gérance, ou l’identifiant du vendeur créé dans l’onglet Équipe.
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
+                Mot de passe
+              </label>
+              <div className="relative">
+                <input
+                  ref={loginInputRef}
+                  type={showLoginPassword ? 'text' : 'password'}
+                  required
+                  autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="go"
+                  value={loginPassword}
+                  onChange={(e) => {
+                    setLoginPassword(e.target.value);
+                    if (loginError) {
+                      setLoginError('');
+                      setLoginErrorKind('');
+                    }
+                  }}
+                  placeholder="Entrez le mot de passe..."
+                  className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 pr-14 text-base outline-none focus:border-[var(--cyan)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword((v) => !v)}
+                  aria-label={showLoginPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  title={showLoginPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 min-h-9 min-w-9 rounded-lg px-2 text-[var(--muted)] hover:text-[var(--night)] hover:bg-slate-100"
+                >
+                  {showLoginPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
             </div>
 
             {loginError && (
-              <p className="text-xs font-semibold text-rose-600 bg-rose-50 p-2.5 rounded-lg border border-rose-200">
-                {loginError}
-              </p>
+              <div
+                className={`rounded-lg border p-2.5 text-xs font-semibold ${
+                  loginErrorKind === 'network'
+                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                    : 'border-rose-200 bg-rose-50 text-rose-600'
+                }`}
+              >
+                <p>{loginError}</p>
+                {loginErrorKind === 'network' && (
+                  <p className="mt-1 font-normal">
+                    Le mot de passe n’a pas été refusé : c’est la connexion à la base qui a échoué.
+                    Vérifiez le réseau, puis appuyez de nouveau sur « Se connecter ».
+                  </p>
+                )}
+              </div>
             )}
+
+            <div className="text-[11px] leading-relaxed text-[var(--muted)]">
+              <button
+                type="button"
+                onClick={() => setShowPasswordHelp((v) => !v)}
+                className="underline decoration-dotted hover:text-[var(--night)]"
+              >
+                Le mot de passe ne passe pas ?
+              </button>
+              {showPasswordHelp && (
+                <ul className="mt-2 list-disc space-y-1 pl-4">
+                  <li>
+                    Appuyez sur l’œil dans le champ pour <strong>voir ce qui est réellement saisi</strong> : le
+                    téléphone propose parfois un ancien mot de passe enregistré.
+                  </li>
+                  <li>Écrivez-le à la main, sans espace avant ni après (les espaces sont ignorés automatiquement).</li>
+                  <li>
+                    Vérifiez que le clavier n’a pas mis de majuscule automatique : le mot de passe distingue les
+                    majuscules des minuscules.
+                  </li>
+                  <li>Après 10 essais ratés, l’appareil est bloqué quelques minutes : attendez, le blocage se lève seul.</li>
+                </ul>
+              )}
+            </div>
 
             <button
               type="submit"
@@ -191,8 +357,15 @@ export function Admin() {
             </button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-[var(--line)] text-center text-xs text-[var(--muted)]">
-            Mot de passe d'initialisation : <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono">alffa2025</code>
+          <div className="mt-6 pt-4 border-t border-[var(--line)] text-left text-xs text-[var(--muted)]">
+            <p className="flex items-start gap-2">
+              <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+              <span>
+                Aucun mot de passe n’est affiché ici. En cas d’oubli, utilisez
+                « Changer le mot de passe » depuis une session ouverte, ou
+                réinitialisez l’empreinte en base (voir la documentation).
+              </span>
+            </p>
           </div>
         </div>
       </main>
@@ -215,7 +388,23 @@ export function Admin() {
               </h1>
               <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1 mt-0.5">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                Session active · Modifications enregistrées en direct
+                Session active
+                <span className="mx-1 text-[var(--muted)]">·</span>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                    role === 'gerant'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-sky-100 text-sky-800'
+                  }`}
+                >
+                  {role === 'gerant' ? (
+                    <ShieldCheck className="h-3 w-3" />
+                  ) : (
+                    <ShoppingBag className="h-3 w-3" />
+                  )}
+                  {ADMIN_ROLE_LABELS[role]}
+                  {identity?.username ? ` · ${identity.username}` : ''}
+                </span>
               </span>
             </div>
           </div>
@@ -230,13 +419,26 @@ export function Admin() {
               <span>Changer mot de passe</span>
             </button>
 
+            {role === 'gerant' && (
+              <button
+                type="button"
+                onClick={() => void downloadBackup()}
+                disabled={isExporting}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-[var(--line)] px-3 text-xs font-semibold text-[var(--night)] hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>{isExporting ? 'Sauvegarde…' : 'Télécharger sauvegarde'}</span>
+              </button>
+            )}
+
             <a
-              href="/api/backup"
-              download
+              href="#/verifier"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-[var(--line)] px-3 text-xs font-semibold text-[var(--night)] hover:bg-slate-50"
             >
-              <Download className="h-3.5 w-3.5" />
-              <span>Télécharger sauvegarde</span>
+              <QrCodeIcon className="h-3.5 w-3.5" />
+              <span>Vérifier un reçu</span>
             </a>
 
             <button
@@ -257,12 +459,23 @@ export function Admin() {
               { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
               { id: 'electronique', label: 'Produits Électronique', icon: Smartphone },
               { id: 'textile', label: 'Produits Textile', icon: Sparkles },
+              { id: 'stock', label: 'Stock', icon: Package },
+              { id: 'receipts', label: 'Reçus', icon: ReceiptText },
+              { id: 'expenses', label: 'Dépenses', icon: Wallet },
+              { id: 'reports', label: 'Statistiques', icon: BarChart3 },
               { id: 'featured', label: 'Produits à la une', icon: Star },
               { id: 'brands', label: 'Marques textiles', icon: Tag },
               { id: 'experience', label: 'Expérience entrepreneuriale', icon: Briefcase },
+              { id: 'team', label: 'Équipe', icon: Users },
               { id: 'settings', label: 'Coordonnées & Paramètres', icon: Settings },
               { id: 'media', label: 'Images & Médias', icon: ImageIcon },
-            ].map((tab) => {
+            ]
+              .filter(
+                (tab) =>
+                  role === 'gerant' ||
+                  !(MANAGER_ONLY_TABS as readonly string[]).includes(tab.id)
+              )
+              .map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
@@ -276,11 +489,11 @@ export function Admin() {
                       : 'text-[var(--muted)] hover:bg-black/5 hover:text-[var(--night)]'
                   }`}
                 >
-                  <Icon className="h-4 w-4" />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
+                    <Icon className="h-4 w-4" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
           </nav>
         </div>
       </div>
@@ -290,6 +503,9 @@ export function Admin() {
         {/* TAB 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8">
+            {/* Sauvegarde : visible du gérant uniquement */}
+            {role === 'gerant' && <BackupCard />}
+
             {/* KPI Cards */}
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
               <div className="rounded-2xl bg-white p-5 border border-[var(--line)] shadow-sm">
@@ -506,6 +722,21 @@ export function Admin() {
 
         {/* TAB 6: SETTINGS FORM */}
         {activeTab === 'experience' && <ExperienceAdmin />}
+
+        {/* TAB STOCK : quantités, valeurs, mouvements */}
+        {activeTab === 'stock' && <StockManager />}
+
+        {/* TAB REÇUS : encaissement, impression, partage */}
+        {activeTab === 'receipts' && <ReceiptsManager />}
+
+        {/* TAB DÉPENSES : achats, transport, loyer, salaires */}
+        {activeTab === 'expenses' && role === 'gerant' && <ExpensesManager />}
+
+        {/* TAB STATISTIQUES : ventes, panier moyen, bénéfice réel */}
+        {activeTab === 'reports' && <ReportsManager canSeeFinance={role === 'gerant'} />}
+
+        {/* TAB ÉQUIPE : comptes gérant / vendeur */}
+        {activeTab === 'team' && role === 'gerant' && <TeamManager />}
 
         {activeTab === 'settings' && (
           <SettingsManager
@@ -1423,6 +1654,33 @@ function SettingsManager({
             />
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
+                NIF (impression sur les reçus)
+              </label>
+              <input
+                type="text"
+                value={settings.nif || ''}
+                onChange={(e) => onChange('nif', e.target.value)}
+                placeholder="ex. 48004 / P NIAMEY"
+                className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
+                RCCM
+              </label>
+              <input
+                type="text"
+                value={settings.rccm || ''}
+                onChange={(e) => onChange('rccm', e.target.value)}
+                placeholder="ex. NI-NIM-2019-B-1234"
+                className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)]"
+              />
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-[var(--night)] mb-1">
               Texte des Mentions Légales
@@ -1951,6 +2209,19 @@ function ProductModal({
 
 // 7. SUPABASE INTEGRATION CARD
 function SupabaseIntegrationCard() {
+  // Le site peut être servi par le serveur Node ou en statique (LWS).
+  // La synchronisation complète et l'archive ZIP n'existent que côté serveur.
+  const [staticHosting, setStaticHosting] = useState(false);
+  useEffect(() => {
+    let active = true;
+    isStaticHosting().then((value) => {
+      if (active) setStaticHosting(value);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const { settings, products, brands, featured, showNotification } = useStore();
   const [checking, setChecking] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -1973,6 +2244,13 @@ function SupabaseIntegrationCard() {
   };
 
   const handleSync = async () => {
+    if (staticHosting) {
+      showNotification(
+        'info',
+        'La synchronisation complète exige le serveur Node : sur un hébergement statique, les écritures passent par les fonctions PostgreSQL (enregistrement article par article, qui fonctionne normalement).'
+      );
+      return;
+    }
     setSyncing(true);
     try {
       const res = await syncAllToSupabase({
@@ -2155,10 +2433,25 @@ CREATE POLICY "Écriture des paramètres" ON public.site_settings FOR ALL USING 
             type="button"
             disabled={syncing}
             onClick={handleSync}
-            className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-emerald-700 px-4 text-xs font-bold text-white hover:bg-emerald-800 shadow-sm transition"
+            title={
+              staticHosting
+                ? 'Indisponible sur hébergement statique : les enregistrements article par article sont déjà transmis à la base.'
+                : 'Recopier tout le catalogue local vers Supabase'
+            }
+            className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl px-4 text-xs font-bold shadow-sm transition ${
+              staticHosting
+                ? 'bg-slate-100 text-slate-500'
+                : 'bg-emerald-700 text-white hover:bg-emerald-800'
+            }`}
           >
             <Database className="h-3.5 w-3.5" />
-            <span>{syncing ? 'Synchronisation...' : 'Synchroniser vers Supabase'}</span>
+            <span>
+              {syncing
+                ? 'Synchronisation...'
+                : staticHosting
+                ? 'Synchronisation (serveur Node requis)'
+                : 'Synchroniser vers Supabase'}
+            </span>
           </button>
 
           <button
@@ -2171,7 +2464,11 @@ CREATE POLICY "Écriture des paramètres" ON public.site_settings FOR ALL USING 
           </button>
 
           <a
-            href="/api/download/lws-zip"
+            href={
+              staticHosting
+                ? 'https://github.com/lesagenoir225-tech/ALLA-NIGER-ECOM/raw/main/release/alffa-niger-lws.zip'
+                : '/api/download/lws-zip'
+            }
             download="alffa-niger-lws.zip"
             className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-[var(--night)] px-4 text-xs font-bold text-white hover:bg-[var(--night-2)] shadow-sm transition"
             title="Télécharger l'archive ZIP prête pour hébergement LWS"

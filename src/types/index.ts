@@ -53,6 +53,10 @@ export interface SiteSettings {
   siteUrl: string;
   legalName: string;
   legalInfo: string;
+  /** Numéro d'identification fiscale (NIF), imprimé sur les reçus. */
+  nif?: string;
+  /** Registre du commerce (RCCM), imprimé sur les reçus. */
+  rccm?: string;
   privacyText: string;
   heroTitle: string;
   heroSubtitle: string;

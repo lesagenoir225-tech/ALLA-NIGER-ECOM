@@ -40,6 +40,8 @@ import {
   uploadExperienceDocument,
   uploadExperiencePhoto,
   openExperienceDocument,
+  isPrivatelyStoredUrl,
+  isPublicStorageUrl,
 } from '../../services/experience';
 import { useDialogBehavior } from '../../utils/dialog';
 
@@ -875,9 +877,7 @@ export function ExperienceAdmin() {
                             value={doc.visibility}
                             onChange={(e) => {
                               const visibility = e.target.value as 'prive' | 'public';
-                              const storedPrivately = doc.url.startsWith(
-                                '/api/experience/documents/'
-                              );
+                              const storedPrivately = isPrivatelyStoredUrl(doc.url);
                               if (visibility === 'public' && storedPrivately) {
                                 // Le serveur déduit la visibilité du dossier de stockage :
                                 // un fichier privé ne peut pas être publié sans ré-import.
@@ -886,6 +886,15 @@ export function ExperienceAdmin() {
                                   'Ce fichier est stocké dans l’espace privé : joignez-le à nouveau avec la visibilité « Public » pour le publier.'
                                 );
                                 return;
+                              }
+                              if (visibility === 'prive' && isPublicStorageUrl(doc.url)) {
+                                // Le fichier reste physiquement dans le bucket public :
+                                // la fiche ne l'expose plus, mais son adresse demeure
+                                // accessible à qui la connaît déjà.
+                                showNotification(
+                                  'info',
+                                  'Le fichier est stocké dans l’espace public : joignez-le à nouveau avec la visibilité « Privé » pour un stockage réellement privé.'
+                                );
                               }
                               setForm((prev) =>
                                 prev
