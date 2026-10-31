@@ -45,8 +45,65 @@ CREATE TABLE IF NOT EXISTS public.products (
   source_image TEXT,
   is_new BOOLEAN DEFAULT false,
   hidden BOOLEAN DEFAULT false,
-  created_at BIGINT DEFAULT (extract(epoch from now()) * 1000)::bigint
+  created_at BIGINT DEFAULT (extract(epoch from now()) * 1000)::bigint,
+  -- Ordre d'affichage DANS la boutique (1 = premier). Il est propre à chaque
+  -- boutique : électronique et textile sont ordonnées séparément.
+  display_order INT
 );
+
+-- 1.1 bis Ordre d'affichage des produits
+--     Ajout idempotent pour les bases déjà créées (la colonne est alors placée
+--     en dernière position, exactement comme dans le CREATE TABLE ci-dessus —
+--     indispensable car `admin_save_product` insère via `SELECT *`).
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS display_order INT;
+
+-- Reprise de l'ordre historique : `created_at` reflète l'ordre de saisie
+-- d'origine (1, 2, 3… par boutique).
+WITH ranked AS (
+  SELECT id, row_number() OVER (PARTITION BY shop ORDER BY created_at NULLS LAST, id) AS rn
+  FROM public.products
+  WHERE display_order IS NULL
+)
+UPDATE public.products p
+   SET display_order = r.rn
+  FROM ranked r
+ WHERE p.id = r.id;
+
+-- Un nouvel article se place en fin de liste de sa boutique s'il n'est pas
+-- positionné explicitement. Le déclencheur couvre tous les chemins d'écriture
+-- (serveur Node, fonctions admin_*, amorçage).
+CREATE OR REPLACE FUNCTION public.products_fill_display_order()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.display_order IS NULL THEN
+    -- Un UPSERT (« INSERT … ON CONFLICT ») déclenche AUSSI ce BEFORE INSERT,
+    -- y compris lorsque la fiche existe déjà. Dans ce cas la position
+    -- actuelle doit être conservée : sinon une simple modification
+    -- déplacerait l'article en fin de liste.
+    IF EXISTS (SELECT 1 FROM public.products WHERE id = NEW.id) THEN
+      SELECT display_order INTO NEW.display_order
+        FROM public.products WHERE id = NEW.id;
+    ELSE
+      SELECT COALESCE(MAX(display_order), 0) + 1
+        INTO NEW.display_order
+        FROM public.products
+       WHERE shop = NEW.shop;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS products_fill_display_order ON public.products;
+CREATE TRIGGER products_fill_display_order
+  BEFORE INSERT ON public.products
+  FOR EACH ROW EXECUTE FUNCTION public.products_fill_display_order();
+
+CREATE INDEX IF NOT EXISTS products_shop_order_idx
+  ON public.products (shop, display_order);
 
 -- 1.2 Marques textiles
 CREATE TABLE IF NOT EXISTS public.brands (

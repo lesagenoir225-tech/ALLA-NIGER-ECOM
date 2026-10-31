@@ -181,6 +181,29 @@ async function main() {
   check('Suppression produit : réussie', del.ok === true);
   check('Suppression produit : identifiant correct', delCall?.body?.p_id === 'p2');
 
+  // 4 bis. Réorganisation des produits : l'ordre est stocké en base
+  const reorder = await api('/api/products/reorder', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer jeton-abc123', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shop: 'textile', orderedIds: ['t2', 't1'] }),
+  });
+  const reorderCall = calls.find((c) => c.url.includes('rpc/admin_reorder_products'));
+  check('Réorganisation : acceptée sans serveur Node', reorder.ok === true);
+  check('Réorganisation : boutique transmise', reorderCall?.body?.p_shop === 'textile');
+  check(
+    'Réorganisation : identifiants transmis dans l’ordre',
+    JSON.stringify(reorderCall?.body?.p_ordered_ids) === '["t2","t1"]',
+    JSON.stringify(reorderCall?.body),
+  );
+  check('Réorganisation : jeton transmis', reorderCall?.body?.p_token === 'jeton-abc123');
+
+  // 4 ter. Catalogue : l'ordre d'affichage est demandé à la base
+  const catalog = await api('/api/data');
+  const catalogData = await catalog.json();
+  const productsCall = calls.find((c) => c.url.includes('/rest/v1/products'));
+  check('Catalogue : tri par display_order demandé', /display_order/.test(productsCall?.url || ''), productsCall?.url);
+  check('Catalogue : produits relus', Array.isArray(catalogData.products) && catalogData.products.length === 1);
+
   // 5. Paramètres : conversion et relecture
   const settings = await api('/api/settings', {
     method: 'PUT',

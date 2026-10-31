@@ -187,7 +187,90 @@ BEGIN
     image = EXCLUDED.image,
     source_image = EXCLUDED.source_image,
     is_new = EXCLUDED.is_new,
-    hidden = EXCLUDED.hidden;
+    hidden = EXCLUDED.hidden,
+    -- La fiche produit envoyée par l'administration ne porte pas d'ordre :
+    -- on conserve alors la position existante. Un ordre explicite est respecté.
+    display_order = COALESCE(EXCLUDED.display_order, public.products.display_order);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.products_fill_display_order()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.display_order IS NULL THEN
+    -- Un UPSERT (« INSERT … ON CONFLICT ») déclenche AUSSI ce BEFORE INSERT,
+    -- y compris lorsque la fiche existe déjà. Dans ce cas la position
+    -- actuelle doit être conservée : sinon une simple modification
+    -- déplacerait l'article en fin de liste.
+    IF EXISTS (SELECT 1 FROM public.products WHERE id = NEW.id) THEN
+      SELECT display_order INTO NEW.display_order
+        FROM public.products WHERE id = NEW.id;
+    ELSE
+      SELECT COALESCE(MAX(display_order), 0) + 1
+        INTO NEW.display_order
+        FROM public.products
+       WHERE shop = NEW.shop;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- Réorganisation manuelle : reçoit la liste ordonnée des identifiants d'une
+-- boutique et écrit la position 1, 2, 3… dans `display_order`.
+-- Les articles non cités (cas rare : ajout concurrent) sont replacés à la
+-- suite, dans leur ordre relatif actuel.
+CREATE OR REPLACE FUNCTION public.admin_reorder_products(
+  p_token TEXT,
+  p_shop TEXT,
+  p_ordered_ids TEXT[]
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_base INT;
+BEGIN
+  PERFORM public.admin_assert(p_token);
+
+  IF p_shop IS NULL OR p_shop NOT IN ('electronique', 'textile') THEN
+    RAISE EXCEPTION 'Boutique inconnue.' USING ERRCODE = '22023';
+  END IF;
+
+  IF p_ordered_ids IS NULL OR cardinality(p_ordered_ids) = 0 THEN
+    RETURN;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM unnest(p_ordered_ids) AS x WHERE x IS NULL) THEN
+    RAISE EXCEPTION 'Liste d''identifiants invalide.' USING ERRCODE = '22023';
+  END IF;
+
+  UPDATE public.products p
+     SET display_order = t.ord
+    FROM (
+      SELECT id, ord::INT AS ord
+        FROM unnest(p_ordered_ids) WITH ORDINALITY AS u(id, ord)
+    ) t
+   WHERE p.id = t.id
+     AND p.shop = p_shop;
+
+  v_base := cardinality(p_ordered_ids);
+
+  WITH rest AS (
+    SELECT id, row_number() OVER (ORDER BY display_order NULLS LAST, id) AS rn
+      FROM public.products
+     WHERE shop = p_shop
+       AND NOT (id = ANY (p_ordered_ids))
+  )
+  UPDATE public.products p
+     SET display_order = v_base + r.rn
+    FROM rest r
+   WHERE p.id = r.id;
 END;
 $$;
 
@@ -357,6 +440,7 @@ REVOKE ALL ON FUNCTION public.admin_logout(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_change_password(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_save_product(TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_delete_product(TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_reorder_products(TEXT, TEXT, TEXT[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_save_brand(TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_delete_brand(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.admin_save_settings(TEXT, JSONB) FROM PUBLIC;
@@ -370,6 +454,7 @@ GRANT EXECUTE ON FUNCTION public.admin_logout(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_change_password(TEXT, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_save_product(TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_delete_product(TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_reorder_products(TEXT, TEXT, TEXT[]) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_save_brand(TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_delete_brand(TEXT, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_save_settings(TEXT, JSONB) TO anon, authenticated;

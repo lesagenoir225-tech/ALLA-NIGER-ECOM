@@ -75,11 +75,24 @@ Navigateur ──clé publishable──> rpc('admin_login',      { password })  
 Si un serveur Node est présent, l'adaptateur l'utilise en priorité : le
 comportement de Vercel est inchangé.
 
+### Réorganisation des produits (disponible partout)
+
+L'ordre d'affichage est stocké en base dans `products.display_order`, **propre à
+chaque boutique** (1 = premier article). Il est donc conservé quel que soit
+l'hébergement, et la fonction `admin_reorder_products(token, shop, ids)` écrit
+les positions depuis l'administration, y compris sur un site 100 % statique.
+
+- Nouvel article ajouté sans position : un déclencheur le place en fin de liste
+  de sa boutique.
+- Modification d'une fiche existante : la position est préservée
+  (`COALESCE(EXCLUDED.display_order, products.display_order)`).
+- `seed.sql` renseigne les positions initiales mais ne les écrase jamais lors
+  d'une régénération (`ON CONFLICT` sans `display_order`).
+
 ### Non disponible sans serveur Node
 
 | Fonction | Raison |
 |---|---|
-| Réorganisation manuelle des produits | l'ordre n'est pas stocké en base |
 | Section BTP | non modélisée en base |
 
 ## Stockage des fichiers (open source)
@@ -105,6 +118,10 @@ Navigateur ──x-admin-token──> functions/v1/upload
 - Sans jeton valide : **401**, rien n'est écrit.
 - Les justificatifs privés ne sont jamais exposés : l'URL stockée pointe vers
   la fonction, qui revérifie le jeton et délivre une **URL signée de 60 s**.
+- L'interface sait reconnaître un fichier stocké en privé (`isPrivatelyStoredUrl`,
+  serveur Node **ou** fonction Edge) : elle refuse de le republier sans réimport,
+  et signale qu'un fichier du bucket public reste joignable à son ancienne
+  adresse même si sa visibilité est repassée à « Privé ».
 - La clé `service_role` reste dans Supabase ; elle n'est jamais transmise au navigateur.
 
 Déploiement de la fonction :

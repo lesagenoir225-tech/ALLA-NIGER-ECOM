@@ -328,7 +328,7 @@ export async function api(path: string, init?: RequestInit): Promise<ApiResponse
     // --- Catalogue ---
     if (path === '/api/data') {
       const [productsRes, brandsRes, featured, settings] = await Promise.all([
-        supabase.from('products').select('*'),
+        supabase.from('products').select('*').order('display_order', { ascending: true }),
         supabase.from('brands').select('*').order('display_order', { ascending: true }),
         readFeatured(),
         readSettings(),
@@ -358,11 +358,13 @@ export async function api(path: string, init?: RequestInit): Promise<ApiResponse
     }
 
     if (path === '/api/products/reorder') {
-      // L'ordre d'affichage des produits n'est pas stocké en base.
-      return failure(
-        'La réorganisation des produits n’est pas disponible en mode base directe.',
-        501,
-      );
+      // L'ordre est stocké dans `products.display_order`, par boutique.
+      await callRpc('admin_reorder_products', {
+        p_token: token,
+        p_shop: body.shop,
+        p_ordered_ids: Array.isArray(body.orderedIds) ? body.orderedIds : [],
+      });
+      return ok({ success: true });
     }
 
     if (path === '/api/featured/toggle' && method === 'POST') {

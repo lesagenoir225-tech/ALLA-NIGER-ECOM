@@ -155,6 +155,29 @@ export async function uploadExperiencePhoto(file: File): Promise<ExperiencePhoto
   };
 }
 
+/** Vrai si l'URL est servie publiquement par Supabase Storage. */
+export function isPublicStorageUrl(url: string): boolean {
+  return /\/storage\/v1\/object\/public\//i.test(url || '');
+}
+
+/**
+ * Vrai si le fichier est stocké dans l'espace PRIVÉ, quel que soit
+ * l'hébergement retenu :
+ *   • serveur Node  → `/api/experience/documents/<fichier>` ;
+ *   • site statique → fonction Edge Supabase (`/functions/v1/upload?file=`)
+ *     ou URL signée de Storage.
+ * Savoir où le fichier est réellement rangé est indispensable : un document
+ * privé ne peut pas devenir public sans être réimporté.
+ */
+export function isPrivatelyStoredUrl(url: string): boolean {
+  if (!url) return false;
+  if (url.startsWith('/api/experience/documents/')) return true;
+  return (
+    /\/functions\/v1\/upload\?/i.test(url) ||
+    /\/storage\/v1\/object\/(sign|authenticated)\//i.test(url)
+  );
+}
+
 /**
  * Téléchargement d'un justificatif privé : la requête porte le jeton administrateur,
  * la route serveur vérifie l'autorisation avant d'envoyer le fichier.

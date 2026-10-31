@@ -71,6 +71,7 @@ type ProductRow = {
   is_new: boolean | null;
   hidden: boolean | null;
   created_at: number | null;
+  display_order?: number | null;
 };
 
 function rowToProduct(r: ProductRow): Product {
@@ -118,6 +119,8 @@ function productToRow(p: Product): ProductRow {
     is_new: Boolean(p.isNew),
     hidden: Boolean(p.hidden),
     created_at: p.createdAt || Date.now(),
+    // L'ordre est calculé par boutique dans `persistDatabaseToRemote` ;
+    // laisser `undefined` ici évite d'écraser une position existante.
   };
 }
 
@@ -230,7 +233,7 @@ export async function loadDatabaseFromRemote(): Promise<DatabaseSchema | null> {
   if (!remoteReadsEnabled()) return null;
   try {
     const [productsRes, brandsRes, settingsRes, featuredRes] = await Promise.all([
-      db().from('products').select('*'),
+      db().from('products').select('*').order('display_order', { ascending: true }),
       db().from('brands').select('*').order('display_order', { ascending: true }),
       db().from('site_settings').select('*').eq('id', 1).maybeSingle(),
       db().from('featured').select('*').order('display_order', { ascending: true }),
@@ -283,7 +286,14 @@ export async function persistDatabaseToRemote(database: DatabaseSchema): Promise
   try {
     const c = db();
 
-    const { error: pErr } = await c.from('products').upsert(database.products.map(productToRow));
+    // L'ordre d'affichage est propre à chaque boutique : la position dans le
+    // tableau applicatif (filtré par boutique) devient `display_order`.
+    const positionInShop: Record<string, number> = {};
+    const productRows = database.products.map((p) => {
+      positionInShop[p.shop] = (positionInShop[p.shop] || 0) + 1;
+      return { ...productToRow(p), display_order: positionInShop[p.shop] };
+    });
+    const { error: pErr } = await c.from('products').upsert(productRows);
     if (pErr) throw new Error(`products : ${pErr.message}`);
 
     const { error: bErr } = await c.from('brands').upsert(

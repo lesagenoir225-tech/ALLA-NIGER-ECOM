@@ -22,6 +22,37 @@ if EXP_FILE.exists():
 else:
     REFS = []
 
+# Les références vivent désormais dans Supabase (et non plus dans un fichier
+# JSON local). Pour ne JAMAIS les effacer lors d'une régénération, le bloc
+# déjà présent dans `supabase/seed.sql` est conservé tel quel quand le fichier
+# source est absent.
+SEED_FILE = ROOT / "supabase/seed.sql"
+REFS_MARKER = "\n-- Références « Expérience entrepreneuriale »"
+
+
+def existing_references_block():
+    """Bloc « références » du seed actuel, ou None s'il n'existe pas."""
+    if not SEED_FILE.exists():
+        return None
+    text = SEED_FILE.read_text(encoding="utf-8")
+    start = text.find(REFS_MARKER)
+    if start == -1:
+        return None
+    end = text.find("\nCOMMIT;", start)
+    if end == -1:
+        return None
+    return text[start:end].rstrip("\n")
+
+
+def reference_count():
+    """Nombre de références réellement écrites dans le seed produit."""
+    if REFS:
+        return len(REFS)
+    block = existing_references_block()
+    if not block:
+        return 0
+    return sum(1 for line in block.splitlines() if line.strip().startswith("('"))
+
 
 def s(value):
     """Littéral SQL texte ou NULL."""
@@ -50,7 +81,7 @@ out.append("-- =================================================================
 out.append("-- ALFFA NIGER — JEUCONTENU INITIAL (généré par scripts/generate-seed-sql.py)")
 out.append("-- Idempotent : peut être rejoué sans perte de données.")
 out.append(f"-- Catalogue : {len(DB['products'])} produits, {len(DB['brands'])} marques")
-out.append(f"-- Expérience : {len(REFS)} références")
+out.append(f"-- Expérience : {reference_count()} références")
 out.append("-- =========================================================================")
 out.append("BEGIN;")
 
@@ -92,10 +123,14 @@ out.append("\n-- Produits")
 out.append(
     "INSERT INTO public.products (id, shop, name, brand, category, price, availability,"
     " capacity, colors, condition, reference, description, specs, model, image,"
-    " source_image, is_new, hidden, created_at) VALUES"
+    " source_image, is_new, hidden, created_at, display_order) VALUES"
 )
 rows = []
+# L'ordre d'affichage est propre à chaque boutique : le rang dans le fichier
+# source (filtré par boutique) devient `display_order`.
+position_in_shop = {}
 for p in DB["products"]:
+    position_in_shop[p["shop"]] = position_in_shop.get(p["shop"], 0) + 1
     rows.append(
         "(" + ", ".join([
             s(p["id"]), s(p["shop"]), s(p["name"]), s(p.get("brand")), s(p.get("category")),
@@ -104,6 +139,7 @@ for p in DB["products"]:
             s(p.get("description")), s(p.get("specs")), s(p.get("model")),
             s(p.get("image")), s(p.get("sourceImage")),
             boolean(p.get("isNew")), boolean(p.get("hidden")), num(p.get("createdAt")),
+            num(position_in_shop[p["shop"]]),
         ]) + ")"
     )
 out.append(",\n".join(rows))
@@ -149,7 +185,12 @@ if rows:
     out.append(",\n".join(rows) + ";")
 
 # --- Références entrepreneuriales ------------------------------------------
-if REFS:
+if not REFS:
+    preserved = existing_references_block()
+    if preserved:
+        out.append(preserved)
+        print("ℹ Références conservées depuis supabase/seed.sql (source JSON absente).")
+else:
     out.append("\n-- Références « Expérience entrepreneuriale »")
     out.append(
         "INSERT INTO public.experience_references (id, title, domain, description,"

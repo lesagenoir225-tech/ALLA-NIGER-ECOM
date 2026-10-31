@@ -10,6 +10,7 @@ Plateforme web e-commerce moderne, dynamique, responsive et rapide pour **ALFFA 
 
 - **Deux univers distincts et étanches** : Catalogues, fiches produits, marques, filtres, sélections « À la une » et numéros WhatsApp entièrement séparés.
 - **Photos réelles intégrées** : Toutes les photos fournies ont été téléchargées et intégrées en local dans `public/images/products/` et `public/images/brands/` pour éviter toute coupure ou erreur 403, avec `object-fit: contain` pour les smartphones et `object-fit: cover` pour valoriser les motifs des bazins.
+- **Ordre d'affichage maîtrisé** : la position de chaque article est enregistrée en base (`products.display_order`, une liste par boutique) ; la flèche ↑ ↓ de l'administration est donc conservée après rechargement, y compris sur un hébergement statique.
 - **Prix en FCFA** : Affichage soigné en francs CFA (ex: `90 000 FCFA`) et mention explicite « *Prix à confirmer / Nous consulter* » pour les modèles sans prix arrêté.
 - **Commande WhatsApp pré-remplie** : Génère automatiquement un message personnalisé incluant le nom de la boutique, le modèle, la capacité/variante, le prix, la quantité demandée et le lien de la fiche. Contrôle du format international (ex. 227XXXXXXXX pour le Niger).
 - **Administration complète (7 sections)** :
@@ -152,10 +153,9 @@ Le site compilé (`npm run build` → `dist/`) est une **application statique** 
 En conséquence :
 
 - **Page publique** : si `/api/experience` est indisponible (ou renvoie une page HTML), la rubrique bascule automatiquement sur le **catalogue publié intégré au build** (`src/data/experienceSeed.ts`). Aucun message d'erreur n'est présenté au visiteur ; une mention discrète indique que les références sont celles publiées à la date de mise en ligne.
-- **Administration** : la gestion des références, des médias et des paramètres **nécessite le serveur** (`npm start`). Sur un hébergement statique, l'onglet affiche un message explicite.
+- **Administration** : sans serveur Node, elle bascule automatiquement sur les fonctions PostgreSQL `admin_*` (mot de passe vérifié en base, jeton de session de 12 h) et sur la fonction Edge `upload` pour les fichiers. Produits, marques, sélections, paramètres, **réorganisation de l'ordre d'affichage** et références restent donc modifiables depuis un site 100 % statique. Détails et modèle de sécurité : `supabase/README.md`.
+- Seule exception : la section **BTP** n'est pas modélisée en base et reste réservée à l'hébergement Node.
 - Les liens Google Maps des deux boutiques disposent de valeurs par défaut dans `src/data/initialData.ts`, donc ils s'affichent même sans API.
-
-Pour que l'administration et les modifications soient aussi disponibles en production, déployez `server.ts` sur un hébergement Node (VPS, Render, Railway, LWS…) ou ajoutez des fonctions serverless.
 
 ### Sécurité de l'administration
 
@@ -180,6 +180,11 @@ node scripts/.smoke.mjs
 npx esbuild scripts/smoke-admin-experience.tsx --bundle --platform=node --format=esm --target=node20 \
   --external:jsdom --outfile=scripts/.smoke-admin.mjs --define:import.meta.env='{"MODE":"test"}'
 node scripts/.smoke-admin.mjs
+
+# Adaptateur de données (site statique) : aucun navigateur requis
+npx esbuild scripts/smoke-backend.ts --bundle --platform=node --format=esm --target=node20 \
+  --outfile=scripts/.smoke-backend.mjs --define:import.meta.env='{"MODE":"test"}'
+node scripts/.smoke-backend.mjs
 ```
 
 **Configuration de prévisualisation** : `vite.config.ts` autorise désormais les hôtes de prévisualisation (`server.allowedHosts: true`), sans impact sur le comportement local.
