@@ -16,6 +16,13 @@ data/stock.json
 data/stock.json.tmp
 data/receipts.json
 data/receipts.json.tmp
+# Dépenses, comptes administrateurs et sauvegardes quotidiennes : données
+# d'exploitation, jamais versionnées (le dépôt est public).
+data/expenses.json
+data/expenses.json.tmp
+data/accounts.json
+data/accounts.json.tmp
+data/backups/
 public/images/uploads/
 package-lock.json
 scripts/.smoke*.mjs
