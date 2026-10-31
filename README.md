@@ -76,6 +76,7 @@ Nouvelle rubrique institutionnelle, accessible depuis l'en-tête, le pied de pag
 - **Domaines** : BTP · Matériel informatique et fournitures · Fournitures vivrières
 - **Filtres** : « Tous les domaines », BTP, Matériel informatique, Fournitures vivrières (fonctionnels)
 - **Fiches** : titre, bénéficiaire, description factuelle, procédure mentionnée (si connue), état d'exécution, photographies authentiques ou emplacement neutre, documents publics autorisés, « Voir les détails ».
+- **Illustrations** : trois visuels vectoriels sobres dans `public/images/experience/` (`btp.svg`, `informatique.svg`, `vivrier.svg`), produits pour la marque — aucune photographie de chantier simulée.
 
 ### Modèle de données
 
@@ -138,7 +139,9 @@ npm run build
 # puis reconstituer l'archive : dist/ + public/.htaccess + public/README_DEPLOIEMENT_LWS.txt + data/database.json
 ```
 
-L'archive prête à téléverser est servie par le site lui-même : **`/api/download/lws-zip`** (fichier `public/alffa-niger-lws.zip`).
+L'archive prête à téléverser est servie par le site lui-même : **`/api/download/lws-zip`** (fichier `release/alffa-niger-lws.zip`).
+
+> L'archive est volontairement stockée **hors de `public/`** : placée dans `public/`, Vite la recopiait dans `dist/` à chaque build (16 Mo inutiles, et croissance exponentielle à la régénération suivante).
 Procédure détaillée : `public/README_DEPLOIEMENT_LWS.txt` (Gestionnaire de fichiers LWS → public_html → Charger → Extraire).
 
 Le projet Vercel `alla-niger-ecom` reste connecté au dépôt et produit des **previews** pour chaque pull request, mais le domaine public n'est pas servi par Vercel.

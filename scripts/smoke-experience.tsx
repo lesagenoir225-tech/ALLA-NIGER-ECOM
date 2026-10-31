@@ -113,6 +113,20 @@ check(
   String((document.body.textContent || '').split('Voir les détails').length - 1)
 );
 check('Aucune photo inventée (placeholders neutres)', text.includes('Photographie authentique à venir'));
+const illus = Array.from(document.querySelectorAll('img')).filter((img) =>
+  (img.getAttribute('src') || '').startsWith('/images/experience/')
+);
+check(
+  'Les 3 illustrations de domaine sont affichées',
+  ['btp', 'informatique', 'vivrier'].every((k) =>
+    illus.some((i) => (i.getAttribute('src') || '') === `/images/experience/${k}.svg`)
+  ),
+  `${illus.length} image(s)`
+);
+check(
+  'Illustrations : textes alternatifs renseignés',
+  illus.every((i) => (i.getAttribute('alt') || '').length > 10)
+);
 
 // Filtre BTP
 const btpFilter = Array.from(document.querySelectorAll('button')).find(

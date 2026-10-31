@@ -998,7 +998,11 @@ async function startServer() {
 
   // 18. Download LWS ZIP Package
   app.get(['/api/download/lws-zip', '/alffa-niger-lws.zip'], (_req: Request, res: Response) => {
-    const zipPath = path.resolve('public/alffa-niger-lws.zip');
+    // L'archive de déploiement vit hors de `public/` pour ne pas être recopiée
+    // dans `dist/` à chaque build (16 Mo inutiles, croissance exponentielle).
+    const releasePath = path.resolve('release/alffa-niger-lws.zip');
+    const legacyPath = path.resolve('public/alffa-niger-lws.zip');
+    const zipPath = fs.existsSync(releasePath) ? releasePath : legacyPath;
     if (fs.existsSync(zipPath)) {
       res.download(zipPath, 'alffa-niger-lws.zip');
     } else {

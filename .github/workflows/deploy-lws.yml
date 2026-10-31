@@ -72,4 +72,3 @@ jobs:
           dangerous-clean-slate: false
           exclude: |
             **/.DS_Store
-            **/alffa-niger-lws.zip

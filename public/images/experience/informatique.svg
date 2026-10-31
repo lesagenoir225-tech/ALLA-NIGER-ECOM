@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" role="img" aria-label="Illustration : matériel informatique et fournitures">
+  <title>Illustration — Matériel informatique</title>
+  <defs>
+    <linearGradient id="infoBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1450"/>
+      <stop offset="1" stop-color="#080F49"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#13B8CE" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#13B8CE" stop-opacity="0.15"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="640" height="400" fill="url(#infoBg)"/>
+
+  <!-- trame -->
+  <g stroke="#13B8CE" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 80h640M0 160h640M0 240h640M0 320h640M120 0v400M240 0v400M360 0v400M480 0v400"/>
+  </g>
+
+  <!-- écran / ordinateur portable -->
+  <g>
+    <rect x="180" y="96" width="280" height="176" rx="12" fill="none" stroke="#13B8CE" stroke-width="6"/>
+    <rect x="196" y="112" width="248" height="144" rx="6" fill="url(#screen)" opacity="0.35"/>
+    <!-- lignes de code -->
+    <g stroke="#ffffff" stroke-opacity="0.45" stroke-width="4" stroke-linecap="round">
+      <path d="M216 140h96M216 164h140M216 188h72M216 212h120"/>
+    </g>
+    <!-- socle -->
+    <path d="M140 300h360l-24 26H164z" fill="#13B8CE" fill-opacity="0.55"/>
+  </g>
+
+  <!-- unité centrale -->
+  <g>
+    <rect x="470" y="176" width="72" height="120" rx="10" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="5"/>
+    <g fill="#13B8CE">
+      <rect x="486" y="196" width="40" height="8" rx="4"/>
+      <rect x="486" y="216" width="40" height="8" rx="4" fill-opacity="0.6"/>
+      <rect x="486" y="236" width="26" height="8" rx="4" fill-opacity="0.35"/>
+    </g>
+  </g>
+
+  <!-- réseau : nœuds reliés -->
+  <g stroke="#13B8CE" stroke-opacity="0.5" stroke-width="3" fill="none">
+    <path d="M88 168l52-26M88 168l52 26M140 142l52 26M140 194l52-26"/>
+  </g>
+  <g fill="#13B8CE">
+    <circle cx="88" cy="168" r="9"/>
+    <circle cx="140" cy="142" r="7" fill-opacity="0.75"/>
+    <circle cx="140" cy="194" r="7" fill-opacity="0.75"/>
+    <circle cx="192" cy="168" r="5" fill-opacity="0.5"/>
+  </g>
+
+  <!-- clavier / cartons de livraison -->
+  <g>
+    <rect x="60" y="300" width="120" height="52" rx="8" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="4"/>
+    <path d="M60 322h120M100 300v52" stroke="#ffffff" stroke-opacity="0.28" stroke-width="4"/>
+  </g>
+  <g>
+    <rect x="200" y="330" width="96" height="34" rx="6" fill="#13B8CE" fill-opacity="0.35"/>
+    <rect x="210" y="352" width="76" height="12" rx="4" fill="#080F49" fill-opacity="0.6"/>
+  </g>
+
+  <path d="M0 330h640" stroke="#13B8CE" stroke-width="4" stroke-linecap="round"/>
+</svg>
