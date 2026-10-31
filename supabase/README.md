@@ -18,6 +18,7 @@ Les fichiers JSON locaux ne servent plus que de secours hors-ligne.
 | `schema.sql` | Structure des tables, index, RLS et droits. **Idempotent** : rejouable sans perte. |
 | `seed.sql` | Contenu initial (29 produits, 3 marques, 12 sélections, 1 fiche paramètres, 14 références). Généré, idempotent. |
 | `store.ts` | Couche de persistance côté serveur (clé `service_role`, jamais exposée au navigateur). |
+| `admin-rpc.sql` | Administration **sans serveur Node** : fonctions `admin_*` en `SECURITY DEFINER`, utilisables depuis un site statique. |
 
 Le fichier historique `../supabase-schema.sql` est **obsolète** : il contenait des
 politiques d'écriture liées à un UUID factice (`REMPLACER_PAR_UUID_ADMIN`), ce qui
@@ -48,6 +49,38 @@ Vérification effectuée sur la base réelle :
 | `authenticated` peut insérer `products` | ✅ refusé |
 | RLS activée sur `experience_references` | ✅ oui |
 | Politique publique sur les références | ✅ `(published = true)` |
+
+## Administration sur hébergement statique
+
+Le site est aussi déployé en statique (LWS). Il n'y a alors aucun processus Node,
+donc `/api/admin/login` renvoyait la page HTML — d'où l'erreur
+« Unexpected token '<' … is not valid JSON ».
+
+L'adaptateur `src/services/backend.ts` détecte l'absence de serveur et bascule
+sur les fonctions PostgreSQL de `admin-rpc.sql` :
+
+```
+Navigateur ──clé publishable──> rpc('admin_login',      { password })  ──> jeton
+           ──clé publishable──> rpc('admin_save_product',{ token, p })  ──> écriture
+```
+
+- Le mot de passe est vérifié en base (bcrypt via `pgcrypto`), jamais dans la page.
+- Les jetons sont stockés dans `admin_sessions` (12 h), révocables, avec
+  limitation à 10 tentatives échouées par quart d'heure.
+- Les tables `admin_credentials`, `admin_sessions` et `admin_login_attempts`
+  n'ont **aucune politique RLS** : elles sont inaccessibles avec la clé publique.
+- Toute écriture exige un jeton valide, sinon la fonction lève une exception.
+
+Si un serveur Node est présent, l'adaptateur l'utilise en priorité : le
+comportement de Vercel est inchangé.
+
+### Non disponible sans serveur Node
+
+| Fonction | Raison |
+|---|---|
+| Téléversement de fichiers | nécessite un stockage (Supabase Storage ou disque) |
+| Réorganisation manuelle des produits | l'ordre n'est pas stocké en base |
+| Section BTP | non modélisée en base |
 
 ## Variables d'environnement
 

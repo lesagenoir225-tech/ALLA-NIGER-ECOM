@@ -4,6 +4,7 @@ import {
   ExperiencePhoto,
 } from '../types/experience';
 import { EXPERIENCE_SEED } from '../data/experienceSeed';
+import { api, ApiResponse } from './backend';
 
 const TOKEN_KEY = 'alffa_niger_admin_token';
 
@@ -23,7 +24,7 @@ function authHeaders(): Record<string, string> {
   };
 }
 
-async function parse<T>(res: Response): Promise<T> {
+async function parse<T>(res: ApiResponse): Promise<T> {
   const text = await res.text();
   let data: any = null;
   try {
@@ -62,7 +63,7 @@ function seedPublicReferences(): ExperienceReference[] {
  */
 export async function fetchPublicReferences(): Promise<PublicReferencesResult> {
   try {
-    const res = await fetch('/api/experience', { headers: { Accept: 'application/json' } });
+    const res = await api('/api/experience', { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
     // Une réponse HTML (page d'erreur d'hébergement) ne doit pas être interprétée.
@@ -77,9 +78,9 @@ export async function fetchPublicReferences(): Promise<PublicReferencesResult> {
 
 /** Vue administrateur : toutes les références, tous les documents. */
 export async function fetchAdminReferences(): Promise<ExperienceReference[]> {
-  let res: Response;
+  let res: ApiResponse;
   try {
-    res = await fetch('/api/admin/experience', { headers: authHeaders() });
+    res = await api('/api/admin/experience', { headers: authHeaders() });
   } catch {
     throw new Error(
       'Serveur d’administration injoignable. La gestion des références nécessite le serveur ALFFA NIGER (et non un hébergement statique).'
@@ -97,7 +98,7 @@ export async function fetchAdminReferences(): Promise<ExperienceReference[]> {
 export async function createReference(
   ref: Partial<ExperienceReference>
 ): Promise<ExperienceReference> {
-  const res = await fetch('/api/experience', {
+  const res = await api('/api/experience', {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(ref),
@@ -110,7 +111,7 @@ export async function updateReference(
   id: string,
   ref: Partial<ExperienceReference>
 ): Promise<ExperienceReference> {
-  const res = await fetch(`/api/experience/${id}`, {
+  const res = await api(`/api/experience/${id}`, {
     method: 'PUT',
     headers: authHeaders(),
     body: JSON.stringify(ref),
@@ -120,7 +121,7 @@ export async function updateReference(
 }
 
 export async function deleteReference(id: string): Promise<void> {
-  const res = await fetch(`/api/experience/${id}`, {
+  const res = await api(`/api/experience/${id}`, {
     method: 'DELETE',
     headers: authHeaders(),
   });
@@ -141,7 +142,7 @@ export async function uploadExperiencePhoto(file: File): Promise<ExperiencePhoto
     reader.onerror = () => reject(new Error('Lecture du fichier échouée.'));
     reader.readAsDataURL(file);
   });
-  const res = await fetch('/api/upload', {
+  const res = await api('/api/upload', {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({ data: base64, filename: file.name }),
@@ -200,7 +201,7 @@ export async function uploadExperienceDocument(
     reader.onerror = () => reject(new Error('Lecture du fichier échouée.'));
     reader.readAsDataURL(file);
   });
-  const res = await fetch('/api/experience/documents/upload', {
+  const res = await api('/api/experience/documents/upload', {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({ data: base64, filename: file.name, visibility }),

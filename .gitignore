@@ -13,5 +13,4 @@ data/experience-references.json.tmp
 data/private-documents/
 public/images/uploads/
 package-lock.json
-scripts/.smoke.mjs
-scripts/.smoke-admin.mjs
+scripts/.smoke*.mjs
