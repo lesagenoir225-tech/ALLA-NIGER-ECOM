@@ -108,6 +108,17 @@ Une photographie publiée doit obligatoirement comporter un texte alternatif des
 
 Onglet **« Expérience entrepreneuriale »** de `/#/admin` : ajout, modification, suppression (avec confirmation), domaine, description, bénéficiaire, procédure, photographies authentiques (texte alternatif obligatoire), documents privés/publics, statuts, enregistrement, prévisualisation, publication/dépublication.
 
+### Hébergement statique (Vercel, Netlify, Firebase Hosting)
+
+Le site compilé (`npm run build` → `dist/`) est une **application statique** : le serveur Express (`server.ts`) n'y est pas déployé.
+En conséquence :
+
+- **Page publique** : si `/api/experience` est indisponible (ou renvoie une page HTML), la rubrique bascule automatiquement sur le **catalogue publié intégré au build** (`src/data/experienceSeed.ts`). Aucun message d'erreur n'est présenté au visiteur ; une mention discrète indique que les références sont celles publiées à la date de mise en ligne.
+- **Administration** : la gestion des références, des médias et des paramètres **nécessite le serveur** (`npm start`). Sur un hébergement statique, l'onglet affiche un message explicite.
+- Les liens Google Maps des deux boutiques disposent de valeurs par défaut dans `src/data/initialData.ts`, donc ils s'affichent même sans API.
+
+Pour que l'administration et les modifications soient aussi disponibles en production, déployez `server.ts` sur un hébergement Node (VPS, Render, Railway, LWS…) ou ajoutez des fonctions serverless.
+
 ### Sécurité de l'administration
 
 - Jeton de session à durée **glissante** : expiration après 12 h d'inactivité (`SESSION_TTL_MS`, valeur par défaut `43200000`).

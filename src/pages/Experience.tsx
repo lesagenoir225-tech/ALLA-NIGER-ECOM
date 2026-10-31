@@ -32,7 +32,7 @@ import {
   domainLabel,
   experienceStatusLabel,
 } from '../types/experience';
-import { fetchPublicReferences } from '../services/experience';
+import { fetchPublicReferences, ReferencesSource } from '../services/experience';
 import { useDialogBehavior } from '../utils/dialog';
 import {
   ExperiencePhotoPlaceholder,
@@ -61,6 +61,7 @@ export function Experience() {
   const [references, setReferences] = useState<ExperienceReference[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [source, setSource] = useState<ReferencesSource>('serveur');
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selected, setSelected] = useState<ExperienceReference | null>(null);
   const [activePhoto, setActivePhoto] = useState(0);
@@ -91,8 +92,10 @@ export function Experience() {
     setIsLoading(true);
     setLoadError(null);
     fetchPublicReferences()
-      .then((list) => {
-        if (!cancelled) setReferences(list);
+      .then(({ references: list, source }) => {
+        if (cancelled) return;
+        setReferences(list);
+        setSource(source);
       })
       .catch((err: Error) => {
         if (!cancelled) setLoadError(err.message || 'Chargement impossible.');
@@ -248,6 +251,19 @@ export function Experience() {
           </div>
         </div>
       </section>
+
+      {/* Note de transparence : catalogue intégré au build (hébergement statique) */}
+      {!isLoading && !loadError && source === 'catalogue-integre' && (
+        <div className="border-b border-[var(--line)] bg-[var(--mist)]">
+          <div className="mx-auto flex max-w-7xl items-start gap-2 px-4 py-2.5 text-[11px] leading-relaxed text-[var(--muted)] sm:px-6">
+            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--cyan-deep)]" aria-hidden="true" />
+            <span>
+              Références publiées par ALFFA NIGER à la date de mise en ligne du site. Pour toute
+              pièce justificative complémentaire, contactez notre direction.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* 3. Filtres */}
       <div className="sticky top-[70px] sm:top-[74px] z-30 border-b border-[var(--line)] bg-white/95 backdrop-blur">

@@ -241,6 +241,47 @@ check(
   )
 );
 
+// --- Scénario hébergement statique (Vercel / Netlify / Firebase Hosting) ---
+// Les routes /api n'existent pas : elles renvoient une page HTML 404.
+globalAny.fetch = async (input: any) => {
+  const url = typeof input === 'string' ? input : input.url;
+  if (url.startsWith('/api/')) {
+    return {
+      ok: false,
+      status: 404,
+      json: async () => {
+        throw new Error('not json');
+      },
+      text: async () => '<!DOCTYPE html><html><body>404 Not Found</body></html>',
+    } as any;
+  }
+  return fakeResponse(FLAGS_PAYLOAD) as any;
+};
+
+// On quitte puis on revient sur la rubrique pour forcer un remontage complet.
+await goTo('#/');
+const staticText = await goTo('#/experience-entrepreneuriale');
+await act(async () => {
+  // Laisse le repli (fetch 404 → catalogue intégré) se résoudre.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+const staticBody = document.body.textContent || '';
+check(
+  'Statique : la rubrique affiche quand même les références',
+  staticBody.includes('Maison d’arrêt d’Agadez') && staticBody.includes('Livraisons répétées de matériels informatiques à la GIZ')
+);
+check(
+  'Statique : aucun message d’erreur affiché au visiteur',
+  !staticBody.includes('ne peuvent pas être chargées')
+);
+check('Statique : note de transparence affichée', staticBody.includes('à la date de mise en ligne du site'));
+check(
+  'Statique : les 3 catégories restent présentes',
+  ['BTP — Bâtiment et Travaux Publics', 'Matériel informatique', 'Fournitures vivrières'].every((d) =>
+    staticBody.includes(d)
+  )
+);
+
 console.log('\n=== Test de fumée — Expérience entrepreneuriale (jsdom) ===');
 results.forEach((r) => console.log(`${r.ok ? '✅' : '❌'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`));
 const failed = results.filter((r) => !r.ok);
