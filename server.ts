@@ -12,7 +12,7 @@ import { EXPERIENCE_SEED } from './src/data/experienceSeed';
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve('data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
 const UPLOADS_DIR = path.resolve('public/images/uploads');
@@ -174,8 +174,49 @@ async function syncDbToSupabase(db: DatabaseSchema) {
   } catch {}
 }
 
-// In-memory sessions
-const activeSessions = new Set<string>();
+// In-memory sessions (jeton -> horodatage de dernière activité)
+// Expiration par inactivité : 12 h par défaut, ajustable via SESSION_TTL_MS.
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS) || 12 * 60 * 60 * 1000;
+const activeSessions = new Map<string, number>();
+
+function isSessionValid(token: string): boolean {
+  const last = activeSessions.get(token);
+  if (!last) return false;
+  if (Date.now() - last > SESSION_TTL_MS) {
+    activeSessions.delete(token);
+    return false;
+  }
+  // Renouvellement glissant tant que l'administrateur est actif.
+  activeSessions.set(token, Date.now());
+  return true;
+}
+
+// Limitation des tentatives de connexion (anti-force brute, en mémoire)
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS) || 10;
+const LOGIN_WINDOW_MS = Number(process.env.LOGIN_WINDOW_MS) || 15 * 60 * 1000;
+const loginAttempts = new Map<string, { count: number; firstAt: number }>();
+
+function loginAttemptState(ip: string) {
+  const entry = loginAttempts.get(ip);
+  if (!entry) return { blocked: false, remaining: LOGIN_MAX_ATTEMPTS };
+  if (Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
+    loginAttempts.delete(ip);
+    return { blocked: false, remaining: LOGIN_MAX_ATTEMPTS };
+  }
+  return {
+    blocked: entry.count >= LOGIN_MAX_ATTEMPTS,
+    remaining: Math.max(0, LOGIN_MAX_ATTEMPTS - entry.count),
+  };
+}
+
+function registerLoginFailure(ip: string) {
+  const entry = loginAttempts.get(ip);
+  if (!entry || Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
+    loginAttempts.set(ip, { count: 1, firstAt: Date.now() });
+  } else {
+    entry.count += 1;
+  }
+}
 
 // Admin password verification
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'alffa2025';
@@ -186,7 +227,7 @@ function verifyAdmin(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ error: 'Accès non autorisé. Authentification requise.' });
   }
   const token = authHeader.slice(7).trim();
-  if (!activeSessions.has(token)) {
+  if (!isSessionValid(token)) {
     return res.status(401).json({ error: 'Session expirée ou invalide. Veuillez vous reconnecter.' });
   }
   next();
@@ -226,6 +267,15 @@ async function startServer() {
 
   // 2. Admin Login
   app.post('/api/admin/login', (req: Request, res: Response) => {
+    const clientIp = (req.ip || req.socket.remoteAddress || 'inconnu').toString();
+    const state = loginAttemptState(clientIp);
+    if (state.blocked) {
+      return res.status(429).json({
+        error:
+          'Trop de tentatives de connexion. Veuillez patienter avant de réessayer.',
+      });
+    }
+
     const { password } = req.body;
     const db = loadDatabase();
     const expectedPassword = db.adminPasswordHash
@@ -241,11 +291,17 @@ async function startServer() {
     }
 
     if (valid) {
+      loginAttempts.delete(clientIp);
       const token = crypto.randomBytes(32).toString('hex');
-      activeSessions.add(token);
+      activeSessions.set(token, Date.now());
       res.json({ success: true, token });
     } else {
-      res.status(401).json({ error: 'Mot de passe incorrect.' });
+      registerLoginFailure(clientIp);
+      const after = loginAttemptState(clientIp);
+      res.status(401).json({
+        error: 'Mot de passe incorrect.',
+        attemptsRemaining: after.remaining,
+      });
     }
   });
 
@@ -254,7 +310,7 @@ async function startServer() {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.slice(7).trim();
-      if (activeSessions.has(token)) {
+      if (isSessionValid(token)) {
         return res.json({ authenticated: true });
       }
     }

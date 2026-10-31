@@ -105,9 +105,17 @@ Une photographie publiée doit obligatoirement comporter un texte alternatif des
 
 Onglet **« Expérience entrepreneuriale »** de `/#/admin` : ajout, modification, suppression (avec confirmation), domaine, description, bénéficiaire, procédure, photographies authentiques (texte alternatif obligatoire), documents privés/publics, statuts, enregistrement, prévisualisation, publication/dépublication.
 
+### Sécurité de l'administration
+
+- Jeton de session à durée **glissante** : expiration après 12 h d'inactivité (`SESSION_TTL_MS`, valeur par défaut `43200000`).
+- **Limitation des tentatives de connexion** : 10 échecs par IP sur 15 minutes (`LOGIN_MAX_ATTEMPTS`, `LOGIN_WINDOW_MS`) → HTTP 429.
+- Contrôle d'autorisation serveur sur **toutes** les routes d'écriture (`verifyAdmin`), y compris l'upload de pièces.
+- Visibilité des documents déduite du stockage réel ; aucun fichier privé n'est exposé par une URL statique.
+
 ### Variables d'environnement
 
-Aucune variable nouvelle n'est requise. `ADMIN_PASSWORD` (facultatif) protège l'administration ; les données restent dans `data/`.
+Aucune variable nouvelle n'est **obligatoire**. `ADMIN_PASSWORD` (facultatif) protège l'administration ; les données restent dans `data/`.
+Réglages facultatifs : `PORT` (défaut 3000), `SESSION_TTL_MS` (défaut 12 h), `LOGIN_MAX_ATTEMPTS` (défaut 10), `LOGIN_WINDOW_MS` (défaut 15 min).
 
 ### Tests de fumée (jsdom)
 

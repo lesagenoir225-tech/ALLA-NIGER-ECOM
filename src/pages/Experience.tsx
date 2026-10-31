@@ -32,6 +32,7 @@ import {
   experienceStatusLabel,
 } from '../types/experience';
 import { fetchPublicReferences } from '../services/experience';
+import { useDialogBehavior } from '../utils/dialog';
 import {
   ExperiencePhotoPlaceholder,
   ExperienceReferenceCard,
@@ -142,6 +143,8 @@ export function Experience() {
     setSelected(reference);
     setActivePhoto(0);
   };
+
+  useDialogBehavior(Boolean(selected), () => setSelected(null));
 
   const publicDocuments = selected
     ? (selected.documents || []).filter((d) => d.visibility === 'public')

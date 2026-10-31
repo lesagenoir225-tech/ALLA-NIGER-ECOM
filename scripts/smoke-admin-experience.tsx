@@ -4,7 +4,6 @@
  * Ce script n'est exécuté ni en production ni dans le bundle client.
  */
 import { JSDOM } from 'jsdom';
-import React from 'react';
 import { act } from 'react';
 
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {

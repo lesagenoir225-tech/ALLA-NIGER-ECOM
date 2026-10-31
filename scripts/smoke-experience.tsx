@@ -4,7 +4,6 @@
  * Ce script n'est pas exécuté en production.
  */
 import { JSDOM } from 'jsdom';
-import React from 'react';
 import { act } from 'react';
 
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
@@ -131,6 +130,18 @@ if (detailsButton) {
 const afterOpen = document.body.textContent || '';
 check('Fiche détaillée : procédure affichée', afterOpen.includes('Procédure mentionnée'));
 check('Fiche détaillée : mention de transparence', afterOpen.includes('Aucun montant, aucune date ni aucune quantité'));
+
+// Fermeture de la fiche par la touche Échap
+await act(async () => {
+  document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+});
+await act(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 30));
+});
+check(
+  'Touche Échap : la fiche détaillée se ferme',
+  !(document.body.textContent || '').includes('Procédure mentionnée')
+);
 
 // --- Non-régression : navigation vers les boutiques existantes ---
 const goTo = async (hash: string) => {

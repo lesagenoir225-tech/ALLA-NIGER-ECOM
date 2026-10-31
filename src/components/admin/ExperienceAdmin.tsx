@@ -41,6 +41,7 @@ import {
   uploadExperiencePhoto,
   openExperienceDocument,
 } from '../../services/experience';
+import { useDialogBehavior } from '../../utils/dialog';
 
 type FormState = {
   id?: string;
@@ -137,6 +138,10 @@ export function ExperienceAdmin() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useDialogBehavior(Boolean(form), () => setForm(null));
+  useDialogBehavior(Boolean(preview), () => setPreview(null));
+  useDialogBehavior(Boolean(deleteTarget), () => setDeleteTarget(null));
 
   const stats = useMemo(() => {
     return {
