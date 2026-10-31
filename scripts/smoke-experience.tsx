@@ -209,6 +209,25 @@ const elecText = await goTo('#/electronique');
 check('Boutique Électronique : produits toujours affichés', elecText.includes('iPhone 13 Pro Max'));
 const textileText = await goTo('#/textile');
 check('Boutique Textile : produits toujours affichés', textileText.includes('Bazin'));
+
+// Localisation Google Maps de la boutique Textile (lien officiel fourni)
+const TEXTILE_MAPS = 'https://maps.app.goo.gl/p6hfGK1j1j32RyWu7';
+const textileMapLinks = Array.from(document.querySelectorAll('a')).filter(
+  (a) => a.getAttribute('href') === TEXTILE_MAPS
+);
+check(
+  'Boutique Textile : lien Google Maps officiel présent (carte de localisation)',
+  textileMapLinks.length >= 2,
+  `${textileMapLinks.length} lien(s)`
+);
+check(
+  'Boutique Textile : plus de mention « bientôt disponible »',
+  !textileText.includes('Localisation bientôt disponible')
+);
+const footerMapLink = Array.from(document.querySelectorAll('footer a')).some(
+  (a) => a.getAttribute('href') === TEXTILE_MAPS
+);
+check('Pied de page : lien Google Maps Textile présent', footerMapLink);
 const contactText = await goTo('#/contact');
 check('Page Contact toujours accessible', contactText.length > 200);
 const homeText = await goTo('#/');

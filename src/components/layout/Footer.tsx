@@ -4,6 +4,7 @@ import { Logo } from '../ui/Logo';
 import { href, scrollToTop, navigate } from '../../utils/router';
 import { useStore } from '../../context/StoreContext';
 import { normalizeWhatsApp } from '../../utils/format';
+import { DEFAULT_MAPS_ELECTRONIQUE, DEFAULT_MAPS_TEXTILE } from '../../data/initialData';
 
 export function Footer() {
   const { settings } = useStore();
@@ -36,8 +37,8 @@ export function Footer() {
   );
   const waUrl = `https://wa.me/${waNorm}?text=${waDefaultMsg}`;
 
-  const elecMapsUrl = settings.mapsElectronique || 'https://maps.app.goo.gl/yr1v33pcPDGsSSpe8?g_st=ic';
-  const textileMapsUrl = settings.mapsTextile || '';
+  const elecMapsUrl = settings.mapsElectronique || DEFAULT_MAPS_ELECTRONIQUE;
+  const textileMapsUrl = settings.mapsTextile || DEFAULT_MAPS_TEXTILE;
 
   return (
     <footer className="bg-[var(--night)] text-white border-t border-white/10 mt-auto">
@@ -221,7 +222,7 @@ export function Footer() {
                 </div>
               </div>
 
-              {/* Boutique Textile Maps (Emplacement prévu) */}
+              {/* Boutique Textile Maps */}
               <div className="rounded-xl bg-white/5 border border-white/10 p-3.5 space-y-1.5">
                 <div className="flex items-center gap-2">
                   <MapPin className="h-4 w-4 text-[var(--sand)] shrink-0" />
@@ -241,7 +242,7 @@ export function Footer() {
                   </a>
                 ) : (
                   <p className="text-xs text-white/50 italic">
-                    Localisation bientôt disponible
+                    Localisation en cours de mise à jour
                   </p>
                 )}
               </div>
