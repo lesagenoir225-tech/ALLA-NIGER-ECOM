@@ -1,5 +1,9 @@
 import { DatabaseSchema, Product, SiteSettings, TextileBrand, BtpProject } from '../types';
 
+/** Liens Google Maps officiels des deux boutiques (repli si la valeur enregistrée est vide). */
+export const DEFAULT_MAPS_ELECTRONIQUE = 'https://maps.app.goo.gl/yr1v33pcPDGsSSpe8?g_st=ic';
+export const DEFAULT_MAPS_TEXTILE = 'https://maps.app.goo.gl/p6hfGK1j1j32RyWu7';
+
 export const INITIAL_SETTINGS: SiteSettings = {
   name: 'ALFFA NIGER',
   slogan: 'La qualité au meilleur prix.',
@@ -12,8 +16,8 @@ export const INITIAL_SETTINGS: SiteSettings = {
   facebook: 'https://www.facebook.com/share/1BpsCF3tBK/?mibextid=wwXIfr',
   instagram: 'https://www.instagram.com/khalil_baye?srtk=NzVnbzJ2dmFvNnhr',
   tiktok: 'https://www.tiktok.com/@alffaniger?_r=1&_t=ZS-9AQ5RF69CYY',
-  mapsElectronique: 'https://maps.app.goo.gl/yr1v33pcPDGsSSpe8?g_st=ic',
-  mapsTextile: '',
+  mapsElectronique: DEFAULT_MAPS_ELECTRONIQUE,
+  mapsTextile: DEFAULT_MAPS_TEXTILE,
   siteUrl: 'https://alffaniger.com',
   legalName: '',
   legalInfo: '',

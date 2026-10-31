@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Tag, BadgeCheck, Store, MessageCircle, Smartphone, Sparkles } from 'lucide-react';
+import { ArrowRight, Tag, BadgeCheck, Store, MessageCircle, Smartphone, Sparkles, Briefcase } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { href, canonicalUrl, scrollToTop } from '../utils/router';
 import { useSeo } from '../utils/seo';
@@ -61,6 +61,21 @@ export function Home() {
 
       {/* 2. Split Portal: The Two Distinct Universes */}
       <section aria-label="Choisir une boutique" className="mx-auto max-w-7xl px-4 sm:px-6">
+        {/* Accès à la rubrique institutionnelle — premier bouton de la zone boutiques.
+            Dimensions, arrondis et typographie alignés sur les boutons d'entrée des
+            boutiques à chaque point de rupture :
+              mobile  : min-h-12, w-full, px-5, text-base  (= boutons « Explorer… »)
+              desktop : min-h-14, w-fit,  px-7, text-lg    (= « Entrer dans l'Électronique ») */}
+        <a
+          href={href('/experience-entrepreneuriale')}
+          onClick={() => scrollToTop(true)}
+          className="mb-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--cyan)] px-5 text-base font-bold text-[var(--night)] transition hover:bg-[#22c7dc] shadow-lg active:scale-[0.99] sm:mb-5 sm:min-h-14 sm:w-fit sm:gap-2.5 sm:px-7 sm:text-lg"
+        >
+          <Briefcase className="h-5 w-5" aria-hidden="true" />
+          <span>Expérience entrepreneuriale</span>
+          <ArrowRight className="h-5 w-5" aria-hidden="true" />
+        </a>
+
         {/* Desktop Split View with angled polygon cut */}
         <div className="relative hidden h-[620px] overflow-hidden rounded-[28px] md:block shadow-xl border border-black/5">
           {/* Left panel: Électronique */}

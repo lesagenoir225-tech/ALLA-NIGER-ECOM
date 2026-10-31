@@ -2,6 +2,7 @@ import React from 'react';
 import { MapPin, Navigation, ExternalLink, Clock, ShieldCheck } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { ShopType } from '../../types';
+import { DEFAULT_MAPS_ELECTRONIQUE, DEFAULT_MAPS_TEXTILE } from '../../data/initialData';
 
 interface LocationCardProps {
   shop: ShopType;
@@ -14,8 +15,8 @@ export function LocationCard({ shop, className = '', variant = 'full' }: Locatio
 
   const isElec = shop === 'electronique';
   const mapsUrl = isElec
-    ? settings.mapsElectronique || 'https://maps.app.goo.gl/yr1v33pcPDGsSSpe8?g_st=ic'
-    : settings.mapsTextile || '';
+    ? settings.mapsElectronique || DEFAULT_MAPS_ELECTRONIQUE
+    : settings.mapsTextile || DEFAULT_MAPS_TEXTILE;
 
   const hasMapsLink = Boolean(mapsUrl && mapsUrl.trim() !== '');
 
@@ -102,14 +103,14 @@ export function LocationCard({ shop, className = '', variant = 'full' }: Locatio
           </div>
         </div>
       ) : (
-        /* State when no maps link is provided yet (e.g. Textile) */
+        /* Repli si aucun lien n'est renseigné dans les paramètres */
         <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-6 text-center space-y-2">
           <Clock className="h-6 w-6 text-slate-400 mx-auto" />
           <p className="font-semibold text-slate-700 text-base">
-            Localisation bientôt disponible
+            Localisation en cours de mise à jour
           </p>
           <p className="text-xs text-[var(--muted)] max-w-md mx-auto leading-relaxed">
-            L'adresse et le lien Google Maps de notre boutique textile sont en cours de finalisation et seront affichés ici très prochainement.
+            Le lien Google Maps de cette boutique n'est pas disponible pour le moment. Contactez-nous sur WhatsApp pour obtenir l'itinéraire.
           </p>
         </div>
       )}

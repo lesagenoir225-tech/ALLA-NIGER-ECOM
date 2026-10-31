@@ -76,15 +76,28 @@ const check = (name: string, ok: boolean, detail?: string) => results.push({ nam
 
 check('Titre principal présent', text.includes('Notre expérience entrepreneuriale'));
 check(
-  'Texte éditorial exact présent',
+  'Texte introductif exact présent',
   text.includes(
-    'ALFFA NIGER développe son expérience entrepreneuriale à travers plusieurs domaines d’activité'
+    'À travers ses différentes interventions, ALFFA Niger développe une expérience diversifiée dans plusieurs secteurs d’activité'
   )
 );
-check('Les 3 domaines sont affichés', ['BTP — Bâtiment et Travaux Publics', 'Matériel informatique et fournitures', 'Fournitures vivrières'].every((d) => text.includes(d)));
-check('Référence Agadez présente', text.includes('maison d’arrêt d’Agadez'));
-check('Référence TGI Zinder présente', text.includes('Tribunal de grande instance de Zinder'));
-check('Référence GIZ présente', text.includes('Livraisons de matériel informatique à la GIZ'));
+check(
+  'Lien « Retour à l’accueil » présent',
+  Array.from(document.querySelectorAll('a')).some(
+    (a) => (a.textContent || '').includes('Retour à l’accueil') && a.getAttribute('href') === '#/'
+  )
+);
+check(
+  'Les 3 catégories sont affichées',
+  ['BTP — Bâtiment et Travaux Publics', 'Matériel informatique', 'Fournitures vivrières'].every(
+    (d) => text.includes(d)
+  )
+);
+check('Référence Agadez présente', text.includes('Maison d’arrêt d’Agadez'));
+check('Sigle DC développé', text.includes('Demande de cotation (DC)'));
+check('Sigle DRP développé', text.includes('demande de renseignement et de prix (DRP)'));
+check('MCA développé', text.includes('Millennium Challenge Account (MCA)'));
+check('Référence GIZ présente', text.includes('Livraisons répétées de matériels informatiques à la GIZ'));
 check('Référence Croix-Rouge présente', text.includes('Croix-Rouge Niger'));
 check('Référence vivrière Tchirozérine présente', text.includes('Inspection de l’enseignement primaire et préscolaire de Tchirozérine'));
 
@@ -113,8 +126,8 @@ if (btpFilter) {
 const afterFilter = document.body.textContent || '';
 check(
   'Filtre BTP : 6 références BTP, aucune référence informatique',
-  afterFilter.includes('Construction du mur de clôture et réhabilitation de la maison d’arrêt d’Agadez') &&
-    !afterFilter.includes('Livraisons de matériel informatique à la GIZ'),
+  afterFilter.includes('Construction du mur de clôture et réhabilitation de la Maison d’arrêt d’Agadez') &&
+    !afterFilter.includes('Livraisons répétées de matériels informatiques à la GIZ'),
   `compteur BTP présent: ${afterFilter.includes('6')}`
 );
 
@@ -155,10 +168,66 @@ const goTo = async (hash: string) => {
   return document.body.textContent || '';
 };
 
+// --- Bouton d'accueil « Expérience entrepreneuriale » ---
+await goTo('#/');
+const homeHtml = document.body.textContent || '';
+const homeLinks = Array.from(document.querySelectorAll('a'));
+// Les boutons de la zone boutiques sont les seuls à porter min-h-14 (rendu desktop).
+const ctaButtons = homeLinks.filter((a) => a.className.includes('min-h-14'));
+const expCta = ctaButtons.find((a) => (a.textContent || '').includes('Expérience entrepreneuriale'));
+const elecCta = ctaButtons.find((a) => (a.textContent || '').includes("Entrer dans l'Électronique"));
+check(
+  'Accueil : bouton « Expérience entrepreneuriale » présent',
+  Boolean(expCta) && expCta!.getAttribute('href') === '#/experience-entrepreneuriale'
+);
+check(
+  'Accueil : ce bouton est le PREMIER de la zone boutiques',
+  Boolean(expCta) && ctaButtons[0] === expCta,
+  ctaButtons.map((a) => (a.textContent || '').trim().slice(0, 32)).join(' | ')
+);
+check(
+  'Accueil : dimensions/typographie desktop identiques au bouton boutique',
+  Boolean(expCta) &&
+    ['sm:min-h-14', 'rounded-xl', 'sm:px-7', 'sm:text-lg', 'font-bold'].every((c) =>
+      expCta!.className.includes(c)
+    ) &&
+    Boolean(elecCta) &&
+    ['min-h-14', 'rounded-xl', 'px-7', 'text-lg', 'font-bold'].every((c) =>
+      elecCta!.className.includes(c)
+    ),
+  expCta ? expCta.className : 'bouton introuvable'
+);
+check(
+  'Accueil : dimensions/typographie mobile identiques au bouton boutique',
+  Boolean(expCta) &&
+    ['min-h-12', 'w-full', 'px-5', 'text-base'].every((c) => expCta!.className.includes(c)),
+  expCta ? expCta.className : 'bouton introuvable'
+);
+void homeHtml;
+
 const elecText = await goTo('#/electronique');
 check('Boutique Électronique : produits toujours affichés', elecText.includes('iPhone 13 Pro Max'));
 const textileText = await goTo('#/textile');
 check('Boutique Textile : produits toujours affichés', textileText.includes('Bazin'));
+
+// Localisation Google Maps de la boutique Textile (lien officiel fourni)
+const TEXTILE_MAPS = 'https://maps.app.goo.gl/p6hfGK1j1j32RyWu7';
+const textileMapLinks = Array.from(document.querySelectorAll('a')).filter(
+  (a) => a.getAttribute('href') === TEXTILE_MAPS
+);
+check(
+  'Boutique Textile : lien Google Maps officiel présent (carte de localisation)',
+  textileMapLinks.length >= 2,
+  `${textileMapLinks.length} lien(s)`
+);
+check(
+  'Boutique Textile : plus de mention « bientôt disponible »',
+  !textileText.includes('Localisation bientôt disponible')
+);
+const footerMapLink = Array.from(document.querySelectorAll('footer a')).some(
+  (a) => a.getAttribute('href') === TEXTILE_MAPS
+);
+check('Pied de page : lien Google Maps Textile présent', footerMapLink);
 const contactText = await goTo('#/contact');
 check('Page Contact toujours accessible', contactText.length > 200);
 const homeText = await goTo('#/');
@@ -169,6 +238,47 @@ check(
   'Lien « Expérience entrepreneuriale » présent dans le menu',
   Array.from(document.querySelectorAll('a')).some(
     (a) => a.getAttribute('href') === '#/experience-entrepreneuriale'
+  )
+);
+
+// --- Scénario hébergement statique (Vercel / Netlify / Firebase Hosting) ---
+// Les routes /api n'existent pas : elles renvoient une page HTML 404.
+globalAny.fetch = async (input: any) => {
+  const url = typeof input === 'string' ? input : input.url;
+  if (url.startsWith('/api/')) {
+    return {
+      ok: false,
+      status: 404,
+      json: async () => {
+        throw new Error('not json');
+      },
+      text: async () => '<!DOCTYPE html><html><body>404 Not Found</body></html>',
+    } as any;
+  }
+  return fakeResponse(FLAGS_PAYLOAD) as any;
+};
+
+// On quitte puis on revient sur la rubrique pour forcer un remontage complet.
+await goTo('#/');
+const staticText = await goTo('#/experience-entrepreneuriale');
+await act(async () => {
+  // Laisse le repli (fetch 404 → catalogue intégré) se résoudre.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+});
+const staticBody = document.body.textContent || '';
+check(
+  'Statique : la rubrique affiche quand même les références',
+  staticBody.includes('Maison d’arrêt d’Agadez') && staticBody.includes('Livraisons répétées de matériels informatiques à la GIZ')
+);
+check(
+  'Statique : aucun message d’erreur affiché au visiteur',
+  !staticBody.includes('ne peuvent pas être chargées')
+);
+check('Statique : note de transparence affichée', staticBody.includes('à la date de mise en ligne du site'));
+check(
+  'Statique : les 3 catégories restent présentes',
+  ['BTP — Bâtiment et Travaux Publics', 'Matériel informatique', 'Fournitures vivrières'].every((d) =>
+    staticBody.includes(d)
   )
 );
 

@@ -7,6 +7,15 @@ import { ExperienceReference } from '../types/experience';
  * Le statut « validé + publié » est appliqué car ces références ont été explicitement
  * transmises pour publication ; toute autre référence reste en brouillon par défaut.
  */
+
+/**
+ * Version éditoriale du jeu de références.
+ * Toute augmentation déclenche une migration NON destructive au démarrage :
+ * seules les fiches jamais modifiées par l'administrateur peuvent être mises à jour
+ * (voir `migrateExperienceStore` dans `server.ts`).
+ */
+export const EXPERIENCE_SEED_VERSION = 2;
+
 const SEED_TIMESTAMP = Date.UTC(2026, 0, 15);
 
 function ref(
@@ -42,11 +51,13 @@ function ref(
 }
 
 export const EXPERIENCE_SEED: ExperienceReference[] = [
-  // ---------------- BTP ----------------
+  // ---------------- BTP — Bâtiment et Travaux Publics ----------------
   ref('exp-btp-agadez', 1, {
-    title: 'Construction du mur de clôture et réhabilitation de la maison d’arrêt d’Agadez',
+    title:
+      'Construction du mur de clôture et réhabilitation de la Maison d’arrêt d’Agadez',
     domain: 'btp',
-    description: 'Construction d’un mur de clôture.\nRéhabilitation de la maison d’arrêt.',
+    description:
+      'Construction du mur de clôture de la Maison d’arrêt d’Agadez et réhabilitation de l’établissement, à la suite d’un appel d’offres.',
     beneficiary: 'Maison d’arrêt d’Agadez',
     procedure: 'Appel d’offres',
     location: 'Agadez',
@@ -55,98 +66,111 @@ export const EXPERIENCE_SEED: ExperienceReference[] = [
     title:
       'Construction du mur de clôture et réhabilitation du Tribunal d’instance de Tchirozérine',
     domain: 'btp',
-    description: 'Travaux de clôture.\nRéhabilitation de l’établissement.',
+    description:
+      'Construction du mur de clôture du Tribunal d’instance de Tchirozérine et réhabilitation de l’établissement, à la suite d’une demande de cotation (DC).',
     beneficiary: 'Tribunal d’instance de Tchirozérine',
-    procedure: 'DC',
+    procedure: 'Demande de cotation (DC)',
     location: 'Tchirozérine',
   }),
   ref('exp-btp-madarounfa', 3, {
-    title: 'Construction du mur de clôture et réhabilitation de la maison d’arrêt de Madarounfa',
+    title:
+      'Construction du mur de clôture et réhabilitation de la Maison d’arrêt de Madarounfa',
     domain: 'btp',
-    description: 'Travaux de clôture.\nRéhabilitation de la maison d’arrêt.',
+    description:
+      'Construction de la clôture de la Maison d’arrêt de Madarounfa et réhabilitation de l’établissement, à la suite d’une demande de cotation (DC).',
     beneficiary: 'Maison d’arrêt de Madarounfa',
-    procedure: 'DC',
+    procedure: 'Demande de cotation (DC)',
     location: 'Madarounfa',
   }),
   ref('exp-btp-aguie', 4, {
-    title: 'Réhabilitation de la maison d’arrêt d’Aguié',
+    title: 'Réhabilitation de la Maison d’arrêt d’Aguié',
     domain: 'btp',
-    description: 'Réhabilitation de l’établissement.',
+    description: 'Réhabilitation de la Maison d’arrêt d’Aguié.',
     beneficiary: 'Maison d’arrêt d’Aguié',
     location: 'Aguié',
   }),
   ref('exp-btp-zinder-tgi', 5, {
     title:
-      'Construction d’un bloc d’audience et réhabilitation de l’ensemble du Tribunal de grande instance de Zinder',
+      'Construction du bloc d’audience et réhabilitation de l’ensemble du Tribunal de grande instance (TGI) de Zinder',
     domain: 'btp',
     description:
-      'Construction d’un bloc d’audience.\nRéhabilitation de l’ensemble du Tribunal de grande instance.',
-    beneficiary: 'Tribunal de grande instance de Zinder',
-    procedure: 'Appel d’offres et DRP',
+      'Construction du bloc d’audience du Tribunal de grande instance (TGI) de Zinder et réhabilitation de l’ensemble du TGI, à la suite d’un appel d’offres et d’une demande de renseignement et de prix (DRP).',
+    beneficiary: 'Tribunal de grande instance (TGI) de Zinder',
+    procedure: 'Appel d’offres et demande de renseignement et de prix (DRP)',
     location: 'Zinder',
   }),
   ref('exp-btp-faj', 6, {
-    title: 'Construction de guérites et réhabilitation des installations de la Faj',
+    title: 'Construction de guérites et réhabilitation des installations de la FAJ',
     domain: 'btp',
-    description: 'Construction de guérites.\nRéhabilitation de l’ensemble de la direction.',
-    beneficiary: 'Direction de la Faj',
+    description:
+      'Construction de guérites à la FAJ et réhabilitation de l’ensemble de la Direction.',
+    beneficiary: 'FAJ',
   }),
 
-  // ---------------- MATÉRIEL INFORMATIQUE ----------------
+  // ---------------- Matériel informatique ----------------
   ref('exp-info-giz', 10, {
-    title: 'Livraisons de matériel informatique à la GIZ',
+    title: 'Livraisons répétées de matériels informatiques à la GIZ',
     domain: 'informatique',
-    description: 'Plusieurs livraisons de matériel informatique.',
+    description:
+      'Livraisons répétées de matériels informatiques auprès de la GIZ, à la suite de plusieurs appels d’offres.',
     beneficiary: 'GIZ',
-    procedure: 'Appels d’offres',
+    procedure: 'Plusieurs appels d’offres',
   }),
   ref('exp-info-fao', 11, {
-    title: 'Livraisons de matériel informatique à la FAO',
+    title: 'Livraisons répétées de matériels informatiques à la FAO',
     domain: 'informatique',
-    description: 'Plusieurs livraisons de matériel informatique.',
+    description:
+      'Livraisons répétées de matériels informatiques auprès de la FAO, à la suite de plusieurs appels d’offres.',
     beneficiary: 'FAO',
-    procedure: 'Appels d’offres',
+    procedure: 'Plusieurs appels d’offres',
   }),
   ref('exp-info-croix-rouge', 12, {
-    title: 'Livraisons de matériel informatique à la Croix-Rouge Niger',
+    title: 'Livraisons de matériels informatiques à la Croix-Rouge Niger',
     domain: 'informatique',
-    description: 'Plusieurs livraisons de matériel informatique.',
+    description:
+      'Livraisons de matériels informatiques auprès de la Croix-Rouge Niger à plusieurs reprises.',
     beneficiary: 'Croix-Rouge Niger',
   }),
   ref('exp-info-mca', 13, {
-    title: 'Fourniture et livraison de matériel informatique au MCA',
+    title: 'Fourniture de matériels informatiques au Millennium Challenge Account (MCA)',
     domain: 'informatique',
-    description: 'Livraison de matériel informatique.',
-    beneficiary: 'MCA',
+    description:
+      'Fourniture de matériels informatiques au Millennium Challenge Account (MCA), à la suite d’un appel d’offres.',
+    beneficiary: 'Millennium Challenge Account (MCA)',
     procedure: 'Appel d’offres',
   }),
   ref('exp-info-justice', 14, {
-    title: 'Livraisons de matériel informatique au ministère de la Justice du Niger',
+    title:
+      'Livraisons répétées de matériels informatiques au ministère de la Justice du Niger',
     domain: 'informatique',
-    description: 'Plusieurs livraisons de matériel informatique.',
+    description:
+      'Livraisons répétées de matériels informatiques auprès du ministère de la Justice du Niger, à la suite de plusieurs appels d’offres ouverts.',
     beneficiary: 'Ministère de la Justice du Niger',
-    procedure: 'Appels d’offres ouverts',
+    procedure: 'Plusieurs appels d’offres ouverts',
   }),
   ref('exp-info-faj', 15, {
-    title: 'Livraison de matériel informatique à la Faj',
+    title: 'Livraison de matériels informatiques à la FAJ',
     domain: 'informatique',
-    description: 'Livraison de matériel informatique.',
-    beneficiary: 'Faj',
+    description:
+      'Livraison de matériels informatiques auprès de la FAJ, à la suite d’appels d’offres.',
+    beneficiary: 'FAJ',
     procedure: 'Appels d’offres',
   }),
   ref('exp-info-jeunesse-sports', 16, {
-    title: 'Fourniture de matériel et de fournitures destinés aux examens',
+    title: 'Fourniture de matériels destinés à l’organisation des examens',
     domain: 'informatique',
-    description: 'Livraison de fournitures pour les examens.',
+    description:
+      'Fourniture de matériels destinés à l’organisation des examens auprès du ministère de la Jeunesse et des Sports du Niger.',
     beneficiary: 'Ministère de la Jeunesse et des Sports du Niger',
   }),
 
-  // ---------------- FOURNITURES VIVRIÈRES ----------------
+  // ---------------- Fournitures vivrières ----------------
   ref('exp-vivrier-tchirozerine-inspection', 20, {
     title:
-      'Livraisons de fournitures vivrières à l’Inspection de l’enseignement primaire et préscolaire de Tchirozérine',
+      'Livraisons répétées de fournitures vivrières à l’Inspection de l’enseignement primaire et préscolaire de Tchirozérine',
     domain: 'vivrier',
-    description: 'Plusieurs livraisons de fournitures vivrières.',
+    description:
+      'Livraisons répétées de fournitures vivrières auprès de l’Inspection de l’enseignement primaire et préscolaire de Tchirozérine, à la suite d’un appel d’offres ouvert.',
     beneficiary: 'Inspection de l’enseignement primaire et préscolaire de Tchirozérine',
     procedure: 'Appel d’offres ouvert',
     location: 'Tchirozérine',

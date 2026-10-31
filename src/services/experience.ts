@@ -3,6 +3,7 @@ import {
   ExperienceReference,
   ExperiencePhoto,
 } from '../types/experience';
+import { EXPERIENCE_SEED } from '../data/experienceSeed';
 
 const TOKEN_KEY = 'alffa_niger_admin_token';
 
@@ -36,16 +37,59 @@ async function parse<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-/** Références publiques : validées + publiées, documents publics uniquement. */
-export async function fetchPublicReferences(): Promise<ExperienceReference[]> {
-  const res = await fetch('/api/experience', { headers: { Accept: 'application/json' } });
-  const data = await parse<{ references: ExperienceReference[] }>(res);
-  return Array.isArray(data.references) ? data.references : [];
+export type ReferencesSource = 'serveur' | 'catalogue-integre';
+
+export interface PublicReferencesResult {
+  references: ExperienceReference[];
+  /** Indique d'où proviennent les données (diagnostic / transparence). */
+  source: ReferencesSource;
+}
+
+/** Références validées + publiées du jeu intégré (repli hors serveur). */
+function seedPublicReferences(): ExperienceReference[] {
+  return EXPERIENCE_SEED.filter((r) => r.published && r.validation === 'valide')
+    .map((r) => ({ ...r, documents: (r.documents || []).filter((d) => d.visibility === 'public') }))
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+}
+
+/**
+ * Références publiques : validées + publiées, documents publics uniquement.
+ *
+ * Sur un hébergement statique (Vercel, Netlify, Firebase Hosting…), les routes
+ * `/api/*` n'existent pas : la requête renvoie alors une page HTML. Dans ce cas
+ * l'affichage se rabat sur le catalogue publié intégré au build, plutôt que de
+ * présenter une erreur au visiteur.
+ */
+export async function fetchPublicReferences(): Promise<PublicReferencesResult> {
+  try {
+    const res = await fetch('/api/experience', { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    // Une réponse HTML (page d'erreur d'hébergement) ne doit pas être interprétée.
+    if (!text.trim().startsWith('{')) throw new Error('Réponse non JSON');
+    const data = JSON.parse(text);
+    if (!Array.isArray(data?.references)) throw new Error('Format inattendu');
+    return { references: data.references as ExperienceReference[], source: 'serveur' };
+  } catch {
+    return { references: seedPublicReferences(), source: 'catalogue-integre' };
+  }
 }
 
 /** Vue administrateur : toutes les références, tous les documents. */
 export async function fetchAdminReferences(): Promise<ExperienceReference[]> {
-  const res = await fetch('/api/admin/experience', { headers: authHeaders() });
+  let res: Response;
+  try {
+    res = await fetch('/api/admin/experience', { headers: authHeaders() });
+  } catch {
+    throw new Error(
+      'Serveur d’administration injoignable. La gestion des références nécessite le serveur ALFFA NIGER (et non un hébergement statique).'
+    );
+  }
+  if (res.status === 404) {
+    throw new Error(
+      'API d’administration absente sur cet hébergement. Déployez le serveur (npm start) pour gérer les références.'
+    );
+  }
   const data = await parse<{ references: ExperienceReference[] }>(res);
   return Array.isArray(data.references) ? data.references : [];
 }

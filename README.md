@@ -71,6 +71,7 @@ Les règles `firestore.rules` et `storage.rules` fournies protègent vos donnée
 Nouvelle rubrique institutionnelle, accessible depuis l'en-tête, le pied de page et le tiroir mobile.
 
 - **URL** : `/#/experience-entrepreneuriale`
+- **Accès** : bouton **« Expérience entrepreneuriale »** placé en **premier** dans la zone des boutiques de la page d'accueil (dimensions, arrondis et typographie identiques aux boutons d'entrée des boutiques), plus entrée dans le menu et le pied de page.
 - **Page** : `src/pages/Experience.tsx` (module isolé, n'affecte pas les boutiques)
 - **Domaines** : BTP · Matériel informatique et fournitures · Fournitures vivrières
 - **Filtres** : « Tous les domaines », BTP, Matériel informatique, Fournitures vivrières (fonctionnels)
@@ -80,6 +81,8 @@ Nouvelle rubrique institutionnelle, accessible depuis l'en-tête, le pied de pag
 
 Fichier dédié **`data/experience-references.json`**, créé automatiquement au premier démarrage à partir de `src/data/experienceSeed.ts`.
 Aucune migration ni suppression n'est effectuée sur `data/database.json`.
+
+**Migration versionnée et non destructive** : le fichier contient `{ version, references }`. Quand `EXPERIENCE_SEED_VERSION` augmente, le serveur aligne les fiches **jamais modifiées par l'administrateur** (`updatedAt === createdAt`) et **préserve intégralement** celles qui ont été éditées, ainsi que les photos, documents et états de publication. Aucune fiche n'est supprimée.
 
 Statuts : `brouillon` → `en_attente` → `valide`, plus l'indicateur de publication `published`.
 **Une référence n'est visible sur le site public que si `validation = "valide"` ET `published = true`** — contrôle appliqué côté serveur (HTTP 400 sinon).
@@ -104,6 +107,17 @@ Une photographie publiée doit obligatoirement comporter un texte alternatif des
 ### Administration
 
 Onglet **« Expérience entrepreneuriale »** de `/#/admin` : ajout, modification, suppression (avec confirmation), domaine, description, bénéficiaire, procédure, photographies authentiques (texte alternatif obligatoire), documents privés/publics, statuts, enregistrement, prévisualisation, publication/dépublication.
+
+### Hébergement statique (Vercel, Netlify, Firebase Hosting)
+
+Le site compilé (`npm run build` → `dist/`) est une **application statique** : le serveur Express (`server.ts`) n'y est pas déployé.
+En conséquence :
+
+- **Page publique** : si `/api/experience` est indisponible (ou renvoie une page HTML), la rubrique bascule automatiquement sur le **catalogue publié intégré au build** (`src/data/experienceSeed.ts`). Aucun message d'erreur n'est présenté au visiteur ; une mention discrète indique que les références sont celles publiées à la date de mise en ligne.
+- **Administration** : la gestion des références, des médias et des paramètres **nécessite le serveur** (`npm start`). Sur un hébergement statique, l'onglet affiche un message explicite.
+- Les liens Google Maps des deux boutiques disposent de valeurs par défaut dans `src/data/initialData.ts`, donc ils s'affichent même sans API.
+
+Pour que l'administration et les modifications soient aussi disponibles en production, déployez `server.ts` sur un hébergement Node (VPS, Render, Railway, LWS…) ou ajoutez des fonctions serverless.
 
 ### Sécurité de l'administration
 

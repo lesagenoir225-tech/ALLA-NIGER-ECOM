@@ -8,7 +8,7 @@ import { createServer as createViteServer } from 'vite';
 import { INITIAL_DATABASE } from './src/data/initialData';
 import { DatabaseSchema, Product, SiteSettings, TextileBrand, BtpProject } from './src/types';
 import { ExperienceReference, ExperienceDocument } from './src/types/experience';
-import { EXPERIENCE_SEED } from './src/data/experienceSeed';
+import { EXPERIENCE_SEED, EXPERIENCE_SEED_VERSION } from './src/data/experienceSeed';
 
 dotenv.config();
 
@@ -34,25 +34,87 @@ if (!fs.existsSync(PRIVATE_DOCS_DIR)) {
 }
 
 // --- Helpers Expérience entrepreneuriale ---
-function loadExperienceReferences(): ExperienceReference[] {
+interface ExperienceStore {
+  version: number;
+  references: ExperienceReference[];
+}
+
+function readExperienceStore(): ExperienceStore {
   if (!fs.existsSync(EXPERIENCE_FILE)) {
-    saveExperienceReferences(EXPERIENCE_SEED);
-    return EXPERIENCE_SEED;
+    const store: ExperienceStore = {
+      version: EXPERIENCE_SEED_VERSION,
+      references: EXPERIENCE_SEED,
+    };
+    saveExperienceStore(store);
+    return store;
   }
   try {
     const parsed = JSON.parse(fs.readFileSync(EXPERIENCE_FILE, 'utf-8'));
-    const list = Array.isArray(parsed) ? parsed : parsed.references;
-    return Array.isArray(list) ? (list as ExperienceReference[]) : [];
+    // Compatibilité : ancien format (tableau simple) traité comme version 1.
+    const isLegacyArray = Array.isArray(parsed);
+    const list = isLegacyArray ? parsed : parsed.references;
+    return {
+      version: isLegacyArray ? 1 : Number(parsed.version) || 1,
+      references: Array.isArray(list) ? (list as ExperienceReference[]) : [],
+    };
   } catch (err) {
-    console.error('Lecture des références entrepreneuriale impossible :', err);
-    return [];
+    console.error('Lecture des références entrepreneuriales impossible :', err);
+    return { version: EXPERIENCE_SEED_VERSION, references: [] };
   }
 }
 
-function saveExperienceReferences(list: ExperienceReference[]): void {
+function saveExperienceStore(store: ExperienceStore): void {
   const tempFile = `${EXPERIENCE_FILE}.tmp`;
-  fs.writeFileSync(tempFile, JSON.stringify(list, null, 2), 'utf-8');
+  fs.writeFileSync(tempFile, JSON.stringify(store, null, 2), 'utf-8');
   fs.renameSync(tempFile, EXPERIENCE_FILE);
+}
+
+/**
+ * Migration NON destructive du jeu de références.
+ * - Aucune référence existante n'est supprimée.
+ * - Une fiche modifiée par l'administrateur (updatedAt != createdAt) n'est JAMAIS écrasée.
+ * - Les photos, documents et l'état de publication sont toujours conservés.
+ */
+function migrateExperienceStore(store: ExperienceStore): ExperienceStore {
+  if (store.version >= EXPERIENCE_SEED_VERSION) return store;
+
+  const references = [...store.references];
+  for (const seed of EXPERIENCE_SEED) {
+    const index = references.findIndex((r) => r.id === seed.id);
+    if (index === -1) {
+      references.push(seed);
+      continue;
+    }
+    const current = references[index];
+    const untouchedByAdmin = current.updatedAt === current.createdAt;
+    if (!untouchedByAdmin) continue; // respecte le travail de l'administrateur
+    references[index] = {
+      ...seed,
+      order: current.order ?? seed.order,
+      validation: current.validation,
+      published: current.published,
+      publishedAt: current.publishedAt,
+      photos: current.photos ?? [],
+      documents: current.documents ?? [],
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    };
+  }
+
+  const migrated: ExperienceStore = { version: EXPERIENCE_SEED_VERSION, references };
+  saveExperienceStore(migrated);
+  console.log(
+    `[ALFFA NIGER] Références entrepreneuriales migrées vers la version ${EXPERIENCE_SEED_VERSION} (${references.length} fiches conservées).`
+  );
+  return migrated;
+}
+
+function loadExperienceReferences(): ExperienceReference[] {
+  return migrateExperienceStore(readExperienceStore()).references;
+}
+
+function saveExperienceReferences(list: ExperienceReference[]): void {
+  saveExperienceStore({ version: EXPERIENCE_SEED_VERSION, references: list });
 }
 
 /** Un document n'est public que s'il est explicitement marqué « public ». */

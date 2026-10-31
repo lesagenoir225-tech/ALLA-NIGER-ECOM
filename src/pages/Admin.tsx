@@ -1335,11 +1335,11 @@ function SettingsManager({
               type="url"
               value={settings.mapsTextile || ''}
               onChange={(e) => onChange('mapsTextile', e.target.value)}
-              placeholder="Laisser vide jusqu'à obtention du lien"
+              placeholder="https://maps.app.goo.gl/p6hfGK1j1j32RyWu7"
               className="w-full min-h-12 rounded-xl border border-[var(--line)] px-3 text-base outline-none focus:border-[var(--cyan)] text-sm font-mono"
             />
             <span className="text-[11px] text-slate-500 mt-1 block">
-              Dès que vous renseignez ce lien, les boutons d'itinéraire s'activeront automatiquement sur la boutique Textile.
+              Lien officiel de la boutique Textile. S'il est laissé vide, le lien enregistré par défaut reste utilisé.
             </span>
           </div>
         </div>
