@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS public.site_settings (
   hero_subtitle TEXT DEFAULT '',
   elec_intro TEXT DEFAULT '',
   textile_intro TEXT DEFAULT '',
+  -- Empreinte SHA-256 du mot de passe administrateur. Jamais en clair :
+  -- le dépôt est public et le navigateur n'y a pas accès (RLS de lecture
+  -- limitée aux colonnes publiques côté site, accès serveur uniquement).
+  admin_password_hash TEXT,
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 

@@ -60,10 +60,36 @@ Vérification effectuée sur la base réelle :
 | `SUPABASE_ANON_KEY` | serveur | Repli de lecture si la clé service est absente |
 | `VITE_SUPABASE_URL` | navigateur | Même URL (publique) |
 | `VITE_SUPABASE_ANON_KEY` | navigateur | Clé publishable (publique, lecture seule) |
-| `ADMIN_PASSWORD` | serveur | Mot de passe de `/#/admin` (défaut `alffa2025`, **à changer**) |
+| `ADMIN_PASSWORD` | serveur | Mot de passe de secours de `/#/admin`, utilisé seulement si aucun mot de passe n'est défini en base |
 
 > ⚠️ Toute variable préfixée `VITE_` est intégrée au JavaScript envoyé aux
 > visiteurs. N'y mettez jamais la clé `service_role`.
+
+## Mot de passe de l'administration
+
+Le mot de passe n'est **pas** écrit dans le code : le dépôt est public.
+
+Il est stocké dans `site_settings.admin_password_hash`, sous forme d'empreinte
+SHA-256, et il est prioritaire sur la variable `ADMIN_PASSWORD`.
+
+| Situation | Mot de passe accepté |
+|---|---|
+| Empreinte présente en base | celui correspondant à l'empreinte |
+| Aucune empreinte, `ADMIN_PASSWORD` défini | valeur de la variable |
+| Aucune empreinte, aucune variable | `alffa2025` (défaut historique) |
+
+Changer le mot de passe depuis l'écran d'administration met à jour l'empreinte
+en base : le changement survit donc aux redéploiements.
+
+Pour réinitialiser l'empreinte directement en SQL :
+
+```sql
+update public.site_settings
+set admin_password_hash = encode(digest('VOTRE_MOT_DE_PASSE', 'sha256'), 'hex')
+where id = 1;
+-- nécessite l'extension pgcrypto ; sinon calculez l'empreinte en local :
+--   python3 -c "import hashlib;print(hashlib.sha256('VOTRE_MOT_DE_PASSE'.encode()).hexdigest())"
+```
 
 ## Régénérer le contenu initial
 

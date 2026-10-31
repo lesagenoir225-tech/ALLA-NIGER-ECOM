@@ -267,6 +267,9 @@ export async function loadDatabaseFromRemote(): Promise<DatabaseSchema | null> {
       products,
       featured,
       brands,
+      // Mot de passe administrateur : stocké haché en base, jamais en clair
+      // et jamais dans le dépôt (qui est public).
+      adminPasswordHash: (settingsRes.data as any)?.admin_password_hash || undefined,
     };
   } catch (err) {
     console.warn('[supabase] erreur de lecture du catalogue :', (err as Error).message);
@@ -294,7 +297,11 @@ export async function persistDatabaseToRemote(database: DatabaseSchema): Promise
     );
     if (bErr) throw new Error(`brands : ${bErr.message}`);
 
-    const { error: sErr } = await c.from('site_settings').upsert(settingsToRow(database.settings));
+    const settingsRow: Record<string, unknown> = settingsToRow(database.settings);
+    if (database.adminPasswordHash) {
+      settingsRow.admin_password_hash = database.adminPasswordHash;
+    }
+    const { error: sErr } = await c.from('site_settings').upsert(settingsRow);
     if (sErr) throw new Error(`site_settings : ${sErr.message}`);
 
     // Suppression des lignes retirées localement.
