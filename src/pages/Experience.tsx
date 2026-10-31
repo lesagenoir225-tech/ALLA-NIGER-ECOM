@@ -3,6 +3,7 @@ import {
   HardHat,
   Laptop,
   Wheat,
+  ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   Building2,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { useSeo } from '../utils/seo';
-import { canonicalUrl } from '../utils/router';
+import { canonicalUrl, href, scrollToTop } from '../utils/router';
 import { normalizeWhatsApp } from '../utils/format';
 import {
   ExperienceDomain,
@@ -157,7 +158,16 @@ export function Experience() {
         <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#13B8CE_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
         <div className="relative mx-auto max-w-7xl px-4 sm:px-6">
           <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full bg-[var(--cyan)]/20 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-[var(--cyan)] border border-[var(--cyan)]/30">
+            <a
+              href={href('/')}
+              onClick={() => scrollToTop(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg text-xs font-semibold text-white/60 transition hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cyan)]"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Retour à l’accueil</span>
+            </a>
+
+            <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[var(--cyan)]/20 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-[var(--cyan)] border border-[var(--cyan)]/30">
               <ShieldCheck className="h-3.5 w-3.5" />
               <span>Références professionnelles</span>
             </div>
@@ -167,11 +177,11 @@ export function Experience() {
             </h1>
 
             <p className="mt-6 text-base sm:text-lg text-white/80 leading-relaxed">
-              ALFFA NIGER développe son expérience entrepreneuriale à travers plusieurs domaines
-              d’activité, notamment le Bâtiment et les Travaux Publics, la fourniture de matériel
-              informatique et la fourniture de produits vivriers. Cette rubrique présente nos
-              références professionnelles et les prestations documentées dans ces différents
-              secteurs.
+              À travers ses différentes interventions, ALFFA Niger développe une expérience
+              diversifiée dans plusieurs secteurs d’activité. L’entreprise accompagne les
+              institutions publiques, les organisations internationales et ses partenaires dans la
+              réalisation de projets de construction, la fourniture de matériel informatique et
+              l’approvisionnement en produits vivriers.
             </p>
 
             <div className="mt-8 flex flex-wrap gap-2.5">
@@ -489,7 +499,19 @@ export function Experience() {
         </div>
       </section>
 
-      {/* 7. Fiche détaillée */}
+      {/* 7. Retour à l'accueil */}
+      <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
+        <a
+          href={href('/')}
+          onClick={() => scrollToTop(true)}
+          className="inline-flex min-h-12 items-center gap-2 rounded-xl border border-[var(--line)] bg-white px-5 text-sm font-bold text-[var(--night)] shadow-xs transition hover:border-[var(--cyan)] hover:bg-[var(--mist)]"
+        >
+          <ArrowLeft className="h-4 w-4 text-[var(--cyan-deep)]" aria-hidden="true" />
+          <span>Retour à l’accueil</span>
+        </a>
+      </div>
+
+      {/* 8. Fiche détaillée */}
       {selected && (
         <div
           role="dialog"

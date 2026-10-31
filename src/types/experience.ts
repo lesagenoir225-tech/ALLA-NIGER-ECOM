@@ -76,7 +76,7 @@ export const EXPERIENCE_DOMAINS: {
   },
   {
     key: 'informatique',
-    label: 'Matériel informatique et fournitures',
+    label: 'Matériel informatique',
     shortLabel: 'Matériel informatique',
     anchor: 'informatique',
     summary:

@@ -91,7 +91,7 @@ check('Onglet « Expérience entrepreneuriale » présent', Boolean(tab));
 if (tab) await click(tab);
 
 text = document.body.textContent || '';
-check('Liste chargée depuis /api/admin/experience', text.includes('maison d’arrêt d’Agadez'));
+check('Liste chargée depuis /api/admin/experience', text.includes('Maison d’arrêt d’Agadez'));
 check('Statut de publication affiché', text.includes('Publié'));
 check('Compteur de références', text.includes('14'));
 check('Boutons d’action disponibles', ['Modifier', 'Aperçu', 'Supprimer'].every((l) => text.includes(l)));
