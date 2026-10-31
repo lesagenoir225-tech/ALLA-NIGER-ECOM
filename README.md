@@ -108,6 +108,21 @@ Une photographie publiée doit obligatoirement comporter un texte alternatif des
 
 Onglet **« Expérience entrepreneuriale »** de `/#/admin` : ajout, modification, suppression (avec confirmation), domaine, description, bénéficiaire, procédure, photographies authentiques (texte alternatif obligatoire), documents privés/publics, statuts, enregistrement, prévisualisation, publication/dépublication.
 
+### Où est réellement publié le site
+
+Le domaine **alffaniger.com** est servi par un **hébergement mutualisé LWS** (fichiers statiques), et non par Vercel.
+Conséquence : un commit sur `main` **ne met pas le site à jour automatiquement**. Il faut régénérer l'archive de production et l'envoyer sur LWS.
+
+```bash
+npm run build
+# puis reconstituer l'archive : dist/ + public/.htaccess + public/README_DEPLOIEMENT_LWS.txt + data/database.json
+```
+
+L'archive prête à téléverser est servie par le site lui-même : **`/api/download/lws-zip`** (fichier `public/alffa-niger-lws.zip`).
+Procédure détaillée : `public/README_DEPLOIEMENT_LWS.txt` (Gestionnaire de fichiers LWS → public_html → Charger → Extraire).
+
+Le projet Vercel `alla-niger-ecom` reste connecté au dépôt et produit des **previews** pour chaque pull request, mais le domaine public n'est pas servi par Vercel.
+
 ### Hébergement statique (Vercel, Netlify, Firebase Hosting)
 
 Le site compilé (`npm run build` → `dist/`) est une **application statique** : le serveur Express (`server.ts`) n'y est pas déployé.
