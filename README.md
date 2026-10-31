@@ -83,7 +83,11 @@ Aucune migration ni suppression n'est effectuée sur `data/database.json`.
 
 Statuts : `brouillon` → `en_attente` → `valide`, plus l'indicateur de publication `published`.
 **Une référence n'est visible sur le site public que si `validation = "valide"` ET `published = true`** — contrôle appliqué côté serveur (HTTP 400 sinon).
-Documents : `visibility: "prive" | "public"` ; les documents privés sont stockés dans `data/private-documents/` (hors de `public/`) et servis uniquement par une route authentifiée.
+Documents : `visibility: "prive" | "public"`. La visibilité n'est pas déclarative : elle est **déduite du dossier de stockage réel** par le serveur.
+- document public → `public/images/uploads/` (URL `/images/uploads/...`)
+- document privé → `data/private-documents/`, hors de `public/`, servi uniquement par `/api/experience/documents/:fichier` après vérification du jeton.
+
+Une photographie publiée doit obligatoirement comporter un texte alternatif descriptif (contrôlé côté serveur : HTTP 400 sinon).
 
 ### API
 

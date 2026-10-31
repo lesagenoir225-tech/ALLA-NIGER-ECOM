@@ -870,6 +870,18 @@ export function ExperienceAdmin() {
                             value={doc.visibility}
                             onChange={(e) => {
                               const visibility = e.target.value as 'prive' | 'public';
+                              const storedPrivately = doc.url.startsWith(
+                                '/api/experience/documents/'
+                              );
+                              if (visibility === 'public' && storedPrivately) {
+                                // Le serveur déduit la visibilité du dossier de stockage :
+                                // un fichier privé ne peut pas être publié sans ré-import.
+                                showNotification(
+                                  'info',
+                                  'Ce fichier est stocké dans l’espace privé : joignez-le à nouveau avec la visibilité « Public » pour le publier.'
+                                );
+                                return;
+                              }
                               setForm((prev) =>
                                 prev
                                   ? {

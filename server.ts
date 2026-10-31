@@ -558,21 +558,34 @@ async function startServer() {
       }));
   }
 
+  const PUBLIC_UPLOAD_PREFIX = '/images/uploads/';
+  const PRIVATE_DOC_PREFIX = '/api/experience/documents/';
+
   function sanitizeDocuments(input: any): ExperienceDocument[] {
     if (!Array.isArray(input)) return [];
     return input
-      .filter((d) => d && typeof d.url === 'string' && d.url.startsWith('/api/experience/documents/'))
-      .map((d, index) => ({
-        id: String(d.id || `doc-${Date.now()}-${index}`),
-        name: String(d.name || 'Document').slice(0, 200),
-        url: d.url,
-        visibility: d.visibility === 'public' ? 'public' : 'prive',
-        mimeType: typeof d.mimeType === 'string' ? d.mimeType : undefined,
-        size: typeof d.size === 'number' ? d.size : undefined,
-        reference: typeof d.reference === 'string' ? d.reference.slice(0, 100) : undefined,
-        description: typeof d.description === 'string' ? d.description.slice(0, 500) : undefined,
-        addedAt: typeof d.addedAt === 'number' ? d.addedAt : Date.now(),
-      }));
+      .filter(
+        (d) =>
+          d &&
+          typeof d.url === 'string' &&
+          (d.url.startsWith(PUBLIC_UPLOAD_PREFIX) || d.url.startsWith(PRIVATE_DOC_PREFIX))
+      )
+      .map((d, index) => {
+        // La visibilité est déduite du stockage réel du fichier, jamais du client :
+        // un fichier du dossier privé ne peut pas devenir public par simple déclaration.
+        const isPublic = d.url.startsWith(PUBLIC_UPLOAD_PREFIX);
+        return {
+          id: String(d.id || `doc-${Date.now()}-${index}`),
+          name: String(d.name || 'Document').slice(0, 200),
+          url: d.url,
+          visibility: isPublic ? 'public' : 'prive',
+          mimeType: typeof d.mimeType === 'string' ? d.mimeType : undefined,
+          size: typeof d.size === 'number' ? d.size : undefined,
+          reference: typeof d.reference === 'string' ? d.reference.slice(0, 100) : undefined,
+          description: typeof d.description === 'string' ? d.description.slice(0, 500) : undefined,
+          addedAt: typeof d.addedAt === 'number' ? d.addedAt : Date.now(),
+        } as ExperienceDocument;
+      });
   }
 
   /** Valide et normalise une référence entrante. Renvoie un message d'erreur si invalide. */
@@ -607,6 +620,13 @@ async function startServer() {
       };
     }
 
+    const photos = input.photos !== undefined ? sanitizePhotos(input.photos) : existing?.photos || [];
+    if (published && photos.some((photo) => !photo.alt || !photo.alt.trim())) {
+      return {
+        error: 'Chaque photographie publiée doit comporter un texte alternatif descriptif.',
+      };
+    }
+
     const now = Date.now();
     return {
       reference: {
@@ -629,7 +649,7 @@ async function startServer() {
         execution: execution as ExperienceReference['execution'],
         validation: validation as ExperienceReference['validation'],
         published,
-        photos: input.photos !== undefined ? sanitizePhotos(input.photos) : existing?.photos || [],
+        photos,
         documents:
           input.documents !== undefined
             ? sanitizeDocuments(input.documents)
