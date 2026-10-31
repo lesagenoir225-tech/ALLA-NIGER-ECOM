@@ -186,15 +186,21 @@ check(
   ctaButtons.map((a) => (a.textContent || '').trim().slice(0, 32)).join(' | ')
 );
 check(
-  'Accueil : dimensions/typographie identiques au bouton boutique',
+  'Accueil : dimensions/typographie desktop identiques au bouton boutique',
   Boolean(expCta) &&
-    ['min-h-14', 'rounded-xl', 'px-7', 'text-lg', 'font-bold'].every((c) =>
+    ['sm:min-h-14', 'rounded-xl', 'sm:px-7', 'sm:text-lg', 'font-bold'].every((c) =>
       expCta!.className.includes(c)
     ) &&
     Boolean(elecCta) &&
     ['min-h-14', 'rounded-xl', 'px-7', 'text-lg', 'font-bold'].every((c) =>
       elecCta!.className.includes(c)
     ),
+  expCta ? expCta.className : 'bouton introuvable'
+);
+check(
+  'Accueil : dimensions/typographie mobile identiques au bouton boutique',
+  Boolean(expCta) &&
+    ['min-h-12', 'w-full', 'px-5', 'text-base'].every((c) => expCta!.className.includes(c)),
   expCta ? expCta.className : 'bouton introuvable'
 );
 void homeHtml;
