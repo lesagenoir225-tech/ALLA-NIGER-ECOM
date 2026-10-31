@@ -103,8 +103,12 @@ version après un rechargement forcé.
   Le mot de passe est vérifié EN BASE (jamais dans la page), et le navigateur
   ne dispose que de la clé publique, qui ne permet aucune écriture directe.
   Vous pouvez donc gérer le catalogue, les paramètres, les références
-  entrepreneuriales, LE STOCK et LES REÇUS directement depuis /#/admin
-  sur LWS (10 onglets au total).
+  entrepreneuriales, LE STOCK, LES REÇUS, LES DÉPENSES, LES STATISTIQUES,
+  L'ÉQUIPE et les SAUVEGARDES directement depuis /#/admin sur LWS
+  (12 onglets au total ; moins pour un compte vendeur).
+  AUCUN mot de passe n'est écrit dans ce dossier : ni dans le code, ni dans
+  data/database.json, ni à l'écran. Il est vérifié en base, sous forme
+  d'empreinte que personne ne peut relire.
 - Téléversement des photos (fonctionne sur LWS) :
   Les images sont envoyées dans Supabase Storage (bucket public-images), via
   une fonction Edge qui contrôle le droit d'écrire avant d'enregistrer.
@@ -131,7 +135,30 @@ version après un rechargement forcé.
   (la marchandise repart automatiquement en stock).
 
 ---------------------------------------------------------------------------------
-7. « LE MOT DE PASSE NE PASSE PAS » : QUE FAIRE ?
+7. STATISTIQUES, DÉPENSES, ÉQUIPE, SAUVEGARDE
+---------------------------------------------------------------------------------
+- Onglet « Statistiques » : chiffre d'affaires du jour / 7 jours / 30 jours /
+  année, panier moyen, ventes par jour, meilleures ventes, moyens de paiement,
+  meilleurs clients, et BÉNÉFICE RÉEL (chiffre d'affaires moins le coût des
+  marchandises vendues, moins les dépenses).
+  Les chiffres viennent des reçus : annuler un reçu le retire des totaux.
+- Onglet « Dépenses » : achats, transport, loyer, salaires, communication,
+  taxes, emballage, autre. Chaque dépense est déduite automatiquement.
+- Onglet « Équipe » : créez un compte VENDEUR (reçus, ventes, stock en
+  consultation) en plus du compte GÉRANT. Un vendeur ne voit ni les finances,
+  ni les dépenses, ni les autres comptes — et la base refuse ces actions même
+  si l'on force l'adresse de la page.
+- Onglet « Reçus » + page publique /#/verifier/CODE : chaque reçu porte un code
+  à 8 caractères et un QR code. Le client scanne, la page confirme que le
+  document est authentique (numéro, date, montant, statut, lignes) sans jamais
+  afficher son nom complet ni son téléphone.
+- Onglet « Stock » : bouton « Alerter sur WhatsApp » qui prépare la liste des
+  articles sous leur seuil d'alerte.
+- Tableau de bord : sauvegarde automatique quotidienne (conservée 90 jours),
+  téléchargeable en un fichier JSON à garder hors du téléphone.
+
+---------------------------------------------------------------------------------
+8. « LE MOT DE PASSE NE PASSE PAS » : QUE FAIRE ?
 ---------------------------------------------------------------------------------
 1) Appuyez sur l'œil dans le champ du mot de passe : votre téléphone a
    peut-être rempli automatiquement un ANCIEN mot de passe enregistré.
@@ -143,6 +170,9 @@ version après un rechargement forcé.
    - « Trop de tentatives échouées depuis cet appareil » : attendez quelques
      minutes, le blocage se lève seul ; un autre appareil peut se connecter ;
    - « Base de données injoignable » : c'est le réseau, PAS le mot de passe.
+   Depuis la dernière version, le mot de passe est vérifié AVANT le compteur
+   de tentatives : un mot de passe correct n'est donc jamais refusé, même
+   après plusieurs erreurs.
 5) Après un déploiement, faites Ctrl+Maj+R (ou Cmd+Maj+R sur Mac) : le
    fichier index.html n'est plus mis en cache, mais un ancien onglet peut
    encore exécuter la version précédente.
